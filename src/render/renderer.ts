@@ -260,9 +260,10 @@ export class GameRenderer {
     if (!inIntro && (warning >= 0 && warning < 4 || breach >= 0 && breach < 4.75)) {
       this.meg.root.visible = true
       this.meg.root.scale.setScalar(4)
-      const arc = breach < 0 ? -2.8 : -3 + 12 * Math.sin(clamp(breach / 4.75) * Math.PI)
-      this.meg.root.position.set(-39 + Math.max(0, breach) * 2.4, arc, -3 + breach * 0.16)
-      this.meg.root.rotation.set(0.34, -0.45, -0.63 + Math.max(0, breach) * 0.3)
+      const breachAge = Math.max(0, breach)
+      const arc = breach < 0 ? -2.8 : -3 + 12 * Math.sin(clamp(breachAge / 4.75) * Math.PI)
+      this.meg.root.position.set(-39 + breachAge * 2.4, arc, -3 + breachAge * 0.16)
+      this.meg.root.rotation.set(0.34, -0.45, -0.63 + breachAge * 0.3)
       if (!reduced && breach >= 0 && breach < 0.9) this.eye.y += Math.sin(breach * 27) * 0.38
     }
     this.meg.tail.rotation.y = Math.sin(t * 3.9) * 0.26

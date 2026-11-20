@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>Fly into the storm. Pull people from the water. Get them home.</strong><br />
-  A cinematic browser rescue game controlled with your two palms.
+  A cinematic browser rescue game you can play with webcam hand gestures or keyboard and mouse.
 </p>
 
 <p align="center">
