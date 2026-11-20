@@ -1,0 +1,22 @@
+node_modules/
+dist/
+playwright-report/
+test-results/
+*.local
+.env
+.env.*
+!.env.example
+.DS_Store
+Thumbs.db
+*.log
+coverage/
+__pycache__/
+.venv/
+.idea/
+.vscode/
+# Local assistant/account metadata and unused full-resolution art references
+.agents/
+.aws/
+.codex/
+images/
+.handoff/

@@ -1,0 +1,1484 @@
+[
+  {
+    "id": "idle_debris_01",
+    "speaker": "mara",
+    "trigger": {
+      "event": "IDLE_DEBRIS"
+    },
+    "text": "Stay together. Nobody lets go of the wood.",
+    "priority": 2,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "steady",
+    "audio": "audio/voice/mara/idle_debris_01.wav"
+  },
+  {
+    "id": "idle_debris_02",
+    "speaker": "hollis",
+    "trigger": {
+      "event": "IDLE_DEBRIS"
+    },
+    "text": "Forty years fishing. Never seen a fin like that.",
+    "priority": 2,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "steady",
+    "audio": "audio/voice/hollis/idle_debris_02.wav"
+  },
+  {
+    "id": "idle_debris_03",
+    "speaker": "jay",
+    "trigger": {
+      "event": "IDLE_DEBRIS"
+    },
+    "text": "Is it coming back?",
+    "priority": 2,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "steady",
+    "audio": "audio/voice/jay/idle_debris_03.wav"
+  },
+  {
+    "id": "idle_debris_04",
+    "speaker": "priya",
+    "trigger": {
+      "event": "IDLE_DEBRIS"
+    },
+    "text": "Keep your chin above the water.",
+    "priority": 2,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "steady",
+    "audio": "audio/voice/priya/idle_debris_04.wav"
+  },
+  {
+    "id": "idle_debris_05",
+    "speaker": "dev",
+    "trigger": {
+      "event": "IDLE_DEBRIS"
+    },
+    "text": "Ana, can you still hear me?",
+    "priority": 2,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "steady",
+    "audio": "audio/voice/dev/idle_debris_05.wav"
+  },
+  {
+    "id": "idle_debris_06",
+    "speaker": "elias",
+    "trigger": {
+      "event": "IDLE_DEBRIS"
+    },
+    "text": "The boards are slipping from the lashings.",
+    "priority": 2,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "steady",
+    "audio": "audio/voice/elias/idle_debris_06.wav"
+  },
+  {
+    "id": "approach_01",
+    "speaker": "ana",
+    "trigger": {
+      "event": "APPROACH"
+    },
+    "text": "Dev, listen. That is a rotor!",
+    "priority": 6,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "hope",
+    "audio": "audio/voice/ana/approach_01.wav"
+  },
+  {
+    "id": "approach_02",
+    "speaker": "priya",
+    "trigger": {
+      "event": "APPROACH"
+    },
+    "text": "Wave slowly. Save your strength.",
+    "priority": 6,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "hope",
+    "audio": "audio/voice/priya/approach_02.wav"
+  },
+  {
+    "id": "approach_03",
+    "speaker": "jay",
+    "trigger": {
+      "event": "APPROACH"
+    },
+    "text": "Here! We are right here!",
+    "priority": 6,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "hope",
+    "audio": "audio/voice/jay/approach_03.wav"
+  },
+  {
+    "id": "approach_04",
+    "speaker": "mara",
+    "trigger": {
+      "event": "APPROACH"
+    },
+    "text": "Raise your arms. Give them something to see.",
+    "priority": 6,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "hope",
+    "audio": "audio/voice/mara/approach_04.wav"
+  },
+  {
+    "id": "approach_05",
+    "speaker": "tommy",
+    "trigger": {
+      "event": "APPROACH"
+    },
+    "text": "That is the best noise I have ever heard.",
+    "priority": 6,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "hope",
+    "audio": "audio/voice/tommy/approach_05.wav"
+  },
+  {
+    "id": "approach_06",
+    "speaker": "reyes",
+    "trigger": {
+      "event": "APPROACH"
+    },
+    "text": "I see orange vests. Coming in low.",
+    "priority": 6,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "hope",
+    "audio": "audio/voice/reyes/approach_06.wav"
+  },
+  {
+    "id": "handover_01",
+    "speaker": "reyes",
+    "trigger": {
+      "event": "HANDOVER"
+    },
+    "text": "All souls spotted. You have control.",
+    "priority": 8,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "steady",
+    "audio": "audio/voice/reyes/handover_01.wav"
+  },
+  {
+    "id": "handover_02",
+    "speaker": "reyes",
+    "trigger": {
+      "event": "HANDOVER"
+    },
+    "text": "Hold her level. The winch is yours.",
+    "priority": 8,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "steady",
+    "audio": "audio/voice/reyes/handover_02.wav"
+  },
+  {
+    "id": "handover_03",
+    "speaker": "reyes",
+    "trigger": {
+      "event": "HANDOVER"
+    },
+    "text": "I have visual. Start with the swimmers.",
+    "priority": 8,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "steady",
+    "audio": "audio/voice/reyes/handover_03.wav"
+  },
+  {
+    "id": "handover_04",
+    "speaker": "reyes",
+    "trigger": {
+      "event": "HANDOVER"
+    },
+    "text": "The searchlight is on. Your controls.",
+    "priority": 8,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "steady",
+    "audio": "audio/voice/reyes/handover_04.wav"
+  },
+  {
+    "id": "handover_05",
+    "speaker": "reyes",
+    "trigger": {
+      "event": "HANDOVER"
+    },
+    "text": "Green deck to starboard. Bring them over.",
+    "priority": 8,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "steady",
+    "audio": "audio/voice/reyes/handover_05.wav"
+  },
+  {
+    "id": "handover_06",
+    "speaker": "reyes",
+    "trigger": {
+      "event": "HANDOVER"
+    },
+    "text": "Eight vests in sight. Begin the recovery.",
+    "priority": 8,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "steady",
+    "audio": "audio/voice/reyes/handover_06.wav"
+  },
+  {
+    "id": "idle_warning_01",
+    "speaker": "jay",
+    "trigger": {
+      "event": "IDLE_WARNING"
+    },
+    "text": "Why are we still down here?",
+    "priority": 5,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "panic",
+    "audio": "audio/voice/jay/idle_warning_01.wav"
+  },
+  {
+    "id": "idle_warning_02",
+    "speaker": "tommy",
+    "trigger": {
+      "event": "IDLE_WARNING"
+    },
+    "text": "I did not survive a shipwreck to be lunch.",
+    "priority": 5,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "panic",
+    "audio": "audio/voice/tommy/idle_warning_02.wav"
+  },
+  {
+    "id": "idle_warning_03",
+    "speaker": "mara",
+    "trigger": {
+      "event": "IDLE_WARNING"
+    },
+    "text": "Bring the hook down. We are losing time.",
+    "priority": 5,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "panic",
+    "audio": "audio/voice/mara/idle_warning_03.wav"
+  },
+  {
+    "id": "idle_warning_04",
+    "speaker": "ana",
+    "trigger": {
+      "event": "IDLE_WARNING"
+    },
+    "text": "Over here! Please!",
+    "priority": 5,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "panic",
+    "audio": "audio/voice/ana/idle_warning_04.wav"
+  },
+  {
+    "id": "idle_warning_05",
+    "speaker": "priya",
+    "trigger": {
+      "event": "IDLE_WARNING"
+    },
+    "text": "We cannot keep everyone above water much longer.",
+    "priority": 5,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "panic",
+    "audio": "audio/voice/priya/idle_warning_05.wav"
+  },
+  {
+    "id": "idle_warning_06",
+    "speaker": "elias",
+    "trigger": {
+      "event": "IDLE_WARNING"
+    },
+    "text": "The circling pattern is tightening.",
+    "priority": 5,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "panic",
+    "audio": "audio/voice/elias/idle_warning_06.wav"
+  },
+  {
+    "id": "shark_spotted_01",
+    "speaker": "elias",
+    "trigger": {
+      "event": "SHARK_SPOTTED"
+    },
+    "text": "Fin. Two o’clock.",
+    "priority": 6,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "urgent",
+    "audio": "audio/voice/elias/shark_spotted_01.wav"
+  },
+  {
+    "id": "shark_spotted_02",
+    "speaker": "mara",
+    "trigger": {
+      "event": "SHARK_SPOTTED"
+    },
+    "text": "Everybody stop kicking. Stay still.",
+    "priority": 6,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "urgent",
+    "audio": "audio/voice/mara/shark_spotted_02.wav"
+  },
+  {
+    "id": "shark_spotted_03",
+    "speaker": "tommy",
+    "trigger": {
+      "event": "SHARK_SPOTTED"
+    },
+    "text": "Something is cutting through the foam.",
+    "priority": 6,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "urgent",
+    "audio": "audio/voice/tommy/shark_spotted_03.wav"
+  },
+  {
+    "id": "shark_spotted_04",
+    "speaker": "hollis",
+    "trigger": {
+      "event": "SHARK_SPOTTED"
+    },
+    "text": "Watch the water beside the raft.",
+    "priority": 6,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "urgent",
+    "audio": "audio/voice/hollis/shark_spotted_04.wav"
+  },
+  {
+    "id": "shark_spotted_05",
+    "speaker": "ana",
+    "trigger": {
+      "event": "SHARK_SPOTTED"
+    },
+    "text": "I can see another one!",
+    "priority": 6,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "urgent",
+    "audio": "audio/voice/ana/shark_spotted_05.wav"
+  },
+  {
+    "id": "shark_spotted_06",
+    "speaker": "priya",
+    "trigger": {
+      "event": "SHARK_SPOTTED"
+    },
+    "text": "Hands on the boards. Keep your legs still.",
+    "priority": 6,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "urgent",
+    "audio": "audio/voice/priya/shark_spotted_06.wav"
+  },
+  {
+    "id": "shark_telegraph_01",
+    "speaker": "jay",
+    "trigger": {
+      "event": "SHARK_TELEGRAPH"
+    },
+    "text": "It is looking at me!",
+    "priority": 7,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "panic",
+    "audio": "audio/voice/jay/shark_telegraph_01.wav"
+  },
+  {
+    "id": "shark_telegraph_02",
+    "speaker": "tommy",
+    "trigger": {
+      "event": "SHARK_TELEGRAPH"
+    },
+    "text": "Pull me up. Pull me up right now!",
+    "priority": 7,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "panic",
+    "audio": "audio/voice/tommy/shark_telegraph_02.wav"
+  },
+  {
+    "id": "shark_telegraph_03",
+    "speaker": "ana",
+    "trigger": {
+      "event": "SHARK_TELEGRAPH"
+    },
+    "text": "It is coming straight at us!",
+    "priority": 7,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "panic",
+    "audio": "audio/voice/ana/shark_telegraph_03.wav"
+  },
+  {
+    "id": "shark_telegraph_04",
+    "speaker": "dev",
+    "trigger": {
+      "event": "SHARK_TELEGRAPH"
+    },
+    "text": "Can you get the hook any closer?",
+    "priority": 7,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "panic",
+    "audio": "audio/voice/dev/shark_telegraph_04.wav"
+  },
+  {
+    "id": "shark_telegraph_05",
+    "speaker": "elias",
+    "trigger": {
+      "event": "SHARK_TELEGRAPH"
+    },
+    "text": "That one is closing fast.",
+    "priority": 7,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "panic",
+    "audio": "audio/voice/elias/shark_telegraph_05.wav"
+  },
+  {
+    "id": "shark_telegraph_06",
+    "speaker": "mara",
+    "trigger": {
+      "event": "SHARK_TELEGRAPH"
+    },
+    "text": "It is turning in. Get clear!",
+    "priority": 7,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "panic",
+    "audio": "audio/voice/mara/shark_telegraph_06.wav"
+  },
+  {
+    "id": "quick_save_01",
+    "speaker": "jay",
+    "trigger": {
+      "event": "QUICK_SAVE"
+    },
+    "text": "Did you see that?",
+    "priority": 9,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "relief",
+    "audio": "audio/voice/jay/quick_save_01.wav"
+  },
+  {
+    "id": "quick_save_02",
+    "speaker": "hollis",
+    "trigger": {
+      "event": "QUICK_SAVE"
+    },
+    "text": "Nice flying, kid.",
+    "priority": 9,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "relief",
+    "audio": "audio/voice/hollis/quick_save_02.wav"
+  },
+  {
+    "id": "quick_save_03",
+    "speaker": "mara",
+    "trigger": {
+      "event": "QUICK_SAVE"
+    },
+    "text": "That was close. Keep climbing.",
+    "priority": 9,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "relief",
+    "audio": "audio/voice/mara/quick_save_03.wav"
+  },
+  {
+    "id": "quick_save_04",
+    "speaker": "dev",
+    "trigger": {
+      "event": "QUICK_SAVE"
+    },
+    "text": "I felt it brush my boot.",
+    "priority": 9,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "relief",
+    "audio": "audio/voice/dev/quick_save_04.wav"
+  },
+  {
+    "id": "quick_save_05",
+    "speaker": "ana",
+    "trigger": {
+      "event": "QUICK_SAVE"
+    },
+    "text": "Another second and it had me.",
+    "priority": 9,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "relief",
+    "audio": "audio/voice/ana/quick_save_05.wav"
+  },
+  {
+    "id": "quick_save_06",
+    "speaker": "tommy",
+    "trigger": {
+      "event": "QUICK_SAVE"
+    },
+    "text": "I am never ordering shark again.",
+    "priority": 9,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "relief",
+    "audio": "audio/voice/tommy/quick_save_06.wav"
+  },
+  {
+    "id": "survivor_lost_01",
+    "speaker": "ana",
+    "trigger": {
+      "event": "SURVIVOR_LOST"
+    },
+    "text": "No! Somebody grab them!",
+    "priority": 10,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "grief",
+    "audio": "audio/voice/ana/survivor_lost_01.wav"
+  },
+  {
+    "id": "survivor_lost_02",
+    "speaker": "mara",
+    "trigger": {
+      "event": "SURVIVOR_LOST"
+    },
+    "text": "Eyes forward. We keep the rest alive.",
+    "priority": 10,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "grief",
+    "audio": "audio/voice/mara/survivor_lost_02.wav"
+  },
+  {
+    "id": "survivor_lost_03",
+    "speaker": "elias",
+    "trigger": {
+      "event": "SURVIVOR_LOST"
+    },
+    "text": "I lost sight of the vest.",
+    "priority": 10,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "grief",
+    "audio": "audio/voice/elias/survivor_lost_03.wav"
+  },
+  {
+    "id": "survivor_lost_04",
+    "speaker": "priya",
+    "trigger": {
+      "event": "SURVIVOR_LOST"
+    },
+    "text": "One went under. Keep moving.",
+    "priority": 10,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "grief",
+    "audio": "audio/voice/priya/survivor_lost_04.wav"
+  },
+  {
+    "id": "survivor_lost_05",
+    "speaker": "jay",
+    "trigger": {
+      "event": "SURVIVOR_LOST"
+    },
+    "text": "They were right beside me.",
+    "priority": 10,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "grief",
+    "audio": "audio/voice/jay/survivor_lost_05.wav"
+  },
+  {
+    "id": "survivor_lost_06",
+    "speaker": "oduya",
+    "trigger": {
+      "event": "SURVIVOR_LOST"
+    },
+    "text": "Stay with the people you can reach.",
+    "priority": 10,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "grief",
+    "audio": "audio/voice/oduya/survivor_lost_06.wav"
+  },
+  {
+    "id": "survivor_grabbed_01",
+    "speaker": "tommy",
+    "trigger": {
+      "event": "SURVIVOR_GRABBED"
+    },
+    "text": "Got me! Oh, I love you, flying machine.",
+    "priority": 4,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "hope",
+    "audio": "audio/voice/tommy/survivor_grabbed_01.wav"
+  },
+  {
+    "id": "survivor_grabbed_02",
+    "speaker": "priya",
+    "trigger": {
+      "event": "SURVIVOR_GRABBED"
+    },
+    "text": "Breathe. Look at the aircraft.",
+    "priority": 4,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "hope",
+    "audio": "audio/voice/priya/survivor_grabbed_02.wav"
+  },
+  {
+    "id": "survivor_grabbed_03",
+    "speaker": "hollis",
+    "trigger": {
+      "event": "SURVIVOR_GRABBED"
+    },
+    "text": "Now haul this old man up.",
+    "priority": 4,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "hope",
+    "audio": "audio/voice/hollis/survivor_grabbed_03.wav"
+  },
+  {
+    "id": "survivor_grabbed_04",
+    "speaker": "mara",
+    "trigger": {
+      "event": "SURVIVOR_GRABBED"
+    },
+    "text": "Harness is clear. Bring us across.",
+    "priority": 4,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "hope",
+    "audio": "audio/voice/mara/survivor_grabbed_04.wav"
+  },
+  {
+    "id": "survivor_grabbed_05",
+    "speaker": "ana",
+    "trigger": {
+      "event": "SURVIVOR_GRABBED"
+    },
+    "text": "I have it. Go!",
+    "priority": 4,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "hope",
+    "audio": "audio/voice/ana/survivor_grabbed_05.wav"
+  },
+  {
+    "id": "survivor_grabbed_06",
+    "speaker": "dev",
+    "trigger": {
+      "event": "SURVIVOR_GRABBED"
+    },
+    "text": "Careful. I am hanging on.",
+    "priority": 4,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "hope",
+    "audio": "audio/voice/dev/survivor_grabbed_06.wav"
+  },
+  {
+    "id": "dangling_01",
+    "speaker": "hollis",
+    "trigger": {
+      "event": "DANGLING"
+    },
+    "text": "My knees are in the next county.",
+    "priority": 3,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "panic",
+    "audio": "audio/voice/hollis/dangling_01.wav"
+  },
+  {
+    "id": "dangling_02",
+    "speaker": "jay",
+    "trigger": {
+      "event": "DANGLING"
+    },
+    "text": "Please keep the hook closed.",
+    "priority": 3,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "panic",
+    "audio": "audio/voice/jay/dangling_02.wav"
+  },
+  {
+    "id": "dangling_03",
+    "speaker": "mara",
+    "trigger": {
+      "event": "DANGLING"
+    },
+    "text": "Get us over the green lights.",
+    "priority": 3,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "panic",
+    "audio": "audio/voice/mara/dangling_03.wav"
+  },
+  {
+    "id": "dangling_04",
+    "speaker": "ana",
+    "trigger": {
+      "event": "DANGLING"
+    },
+    "text": "Just a little higher!",
+    "priority": 3,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "panic",
+    "audio": "audio/voice/ana/dangling_04.wav"
+  },
+  {
+    "id": "dangling_05",
+    "speaker": "dev",
+    "trigger": {
+      "event": "DANGLING"
+    },
+    "text": "I can see the deck.",
+    "priority": 3,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "panic",
+    "audio": "audio/voice/dev/dangling_05.wav"
+  },
+  {
+    "id": "dangling_06",
+    "speaker": "tommy",
+    "trigger": {
+      "event": "DANGLING"
+    },
+    "text": "I miss floors. I really miss floors.",
+    "priority": 3,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "panic",
+    "audio": "audio/voice/tommy/dangling_06.wav"
+  },
+  {
+    "id": "survivor_delivered_01",
+    "speaker": "oduya",
+    "trigger": {
+      "event": "SURVIVOR_DELIVERED"
+    },
+    "text": "Got you. Blanket is coming.",
+    "priority": 6,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "relief",
+    "audio": "audio/voice/oduya/survivor_delivered_01.wav"
+  },
+  {
+    "id": "survivor_delivered_02",
+    "speaker": "oduya",
+    "trigger": {
+      "event": "SURVIVOR_DELIVERED"
+    },
+    "text": "You are safe on deck. Sit by the rail.",
+    "priority": 6,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "relief",
+    "audio": "audio/voice/oduya/survivor_delivered_02.wav"
+  },
+  {
+    "id": "survivor_delivered_03",
+    "speaker": "oduya",
+    "trigger": {
+      "event": "SURVIVOR_DELIVERED"
+    },
+    "text": "Another one aboard. Make some room.",
+    "priority": 6,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "relief",
+    "audio": "audio/voice/oduya/survivor_delivered_03.wav"
+  },
+  {
+    "id": "survivor_delivered_04",
+    "speaker": "oduya",
+    "trigger": {
+      "event": "SURVIVOR_DELIVERED"
+    },
+    "text": "Steady landing. We have them.",
+    "priority": 6,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "relief",
+    "audio": "audio/voice/oduya/survivor_delivered_04.wav"
+  },
+  {
+    "id": "survivor_delivered_05",
+    "speaker": "oduya",
+    "trigger": {
+      "event": "SURVIVOR_DELIVERED"
+    },
+    "text": "That is it. Let go of the cable.",
+    "priority": 6,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "relief",
+    "audio": "audio/voice/oduya/survivor_delivered_05.wav"
+  },
+  {
+    "id": "survivor_delivered_06",
+    "speaker": "oduya",
+    "trigger": {
+      "event": "SURVIVOR_DELIVERED"
+    },
+    "text": "Come under the light. We can warm you here.",
+    "priority": 6,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "relief",
+    "audio": "audio/voice/oduya/survivor_delivered_06.wav"
+  },
+  {
+    "id": "megalodon_warning_01",
+    "speaker": "elias",
+    "trigger": {
+      "event": "MEGALODON_WARNING"
+    },
+    "text": "That shadow is a building.",
+    "priority": 9,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "urgent",
+    "audio": "audio/voice/elias/megalodon_warning_01.wav"
+  },
+  {
+    "id": "megalodon_warning_02",
+    "speaker": "mara",
+    "trigger": {
+      "event": "MEGALODON_WARNING"
+    },
+    "text": "Brace! Something is under the raft.",
+    "priority": 9,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "urgent",
+    "audio": "audio/voice/mara/megalodon_warning_02.wav"
+  },
+  {
+    "id": "megalodon_warning_03",
+    "speaker": "hollis",
+    "trigger": {
+      "event": "MEGALODON_WARNING"
+    },
+    "text": "That is the one that hit the ship.",
+    "priority": 9,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "urgent",
+    "audio": "audio/voice/hollis/megalodon_warning_03.wav"
+  },
+  {
+    "id": "megalodon_warning_04",
+    "speaker": "ana",
+    "trigger": {
+      "event": "MEGALODON_WARNING"
+    },
+    "text": "The whole raft is lifting!",
+    "priority": 9,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "urgent",
+    "audio": "audio/voice/ana/megalodon_warning_04.wav"
+  },
+  {
+    "id": "megalodon_warning_05",
+    "speaker": "reyes",
+    "trigger": {
+      "event": "MEGALODON_WARNING"
+    },
+    "text": "Large contact under you. Be ready to climb.",
+    "priority": 9,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "urgent",
+    "audio": "audio/voice/reyes/megalodon_warning_05.wav"
+  },
+  {
+    "id": "megalodon_warning_06",
+    "speaker": "jay",
+    "trigger": {
+      "event": "MEGALODON_WARNING"
+    },
+    "text": "The water is moving the wrong way.",
+    "priority": 9,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "urgent",
+    "audio": "audio/voice/jay/megalodon_warning_06.wav"
+  },
+  {
+    "id": "megalodon_breach_01",
+    "speaker": "hollis",
+    "trigger": {
+      "event": "MEGALODON_BREACH"
+    },
+    "text": "Merciful heavens.",
+    "priority": 11,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "panic",
+    "audio": "audio/voice/hollis/megalodon_breach_01.wav"
+  },
+  {
+    "id": "megalodon_breach_02",
+    "speaker": "ana",
+    "trigger": {
+      "event": "MEGALODON_BREACH"
+    },
+    "text": "It is huge!",
+    "priority": 11,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "panic",
+    "audio": "audio/voice/ana/megalodon_breach_02.wav"
+  },
+  {
+    "id": "megalodon_breach_03",
+    "speaker": "mara",
+    "trigger": {
+      "event": "MEGALODON_BREACH"
+    },
+    "text": "The raft is gone. Count the vests.",
+    "priority": 11,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "panic",
+    "audio": "audio/voice/mara/megalodon_breach_03.wav"
+  },
+  {
+    "id": "megalodon_breach_04",
+    "speaker": "reyes",
+    "trigger": {
+      "event": "MEGALODON_BREACH"
+    },
+    "text": "Climb! Get the cable clear!",
+    "priority": 11,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "panic",
+    "audio": "audio/voice/reyes/megalodon_breach_04.wav"
+  },
+  {
+    "id": "megalodon_breach_05",
+    "speaker": "dev",
+    "trigger": {
+      "event": "MEGALODON_BREACH"
+    },
+    "text": "The boards are coming apart!",
+    "priority": 11,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "panic",
+    "audio": "audio/voice/dev/megalodon_breach_05.wav"
+  },
+  {
+    "id": "megalodon_breach_06",
+    "speaker": "priya",
+    "trigger": {
+      "event": "MEGALODON_BREACH"
+    },
+    "text": "Keep floating. Help can still see you.",
+    "priority": 11,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "panic",
+    "audio": "audio/voice/priya/megalodon_breach_06.wav"
+  },
+  {
+    "id": "all_aboard_01",
+    "speaker": "oduya",
+    "trigger": {
+      "event": "ALL_ABOARD"
+    },
+    "text": "That is everyone. Hold on, we are going home.",
+    "priority": 11,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "relief",
+    "audio": "audio/voice/oduya/all_aboard_01.wav"
+  },
+  {
+    "id": "all_aboard_02",
+    "speaker": "reyes",
+    "trigger": {
+      "event": "ALL_ABOARD"
+    },
+    "text": "All souls clear. Good flying.",
+    "priority": 11,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "relief",
+    "audio": "audio/voice/reyes/all_aboard_02.wav"
+  },
+  {
+    "id": "all_aboard_03",
+    "speaker": "oduya",
+    "trigger": {
+      "event": "ALL_ABOARD"
+    },
+    "text": "Take the helm. Follow the lighthouse.",
+    "priority": 11,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "relief",
+    "audio": "audio/voice/oduya/all_aboard_03.wav"
+  },
+  {
+    "id": "all_aboard_04",
+    "speaker": "oduya",
+    "trigger": {
+      "event": "ALL_ABOARD"
+    },
+    "text": "Everyone has a place. Bring us in.",
+    "priority": 11,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "relief",
+    "audio": "audio/voice/oduya/all_aboard_04.wav"
+  },
+  {
+    "id": "all_aboard_05",
+    "speaker": "oduya",
+    "trigger": {
+      "event": "ALL_ABOARD"
+    },
+    "text": "Close the hatches. We are underway.",
+    "priority": 11,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "relief",
+    "audio": "audio/voice/oduya/all_aboard_05.wav"
+  },
+  {
+    "id": "all_aboard_06",
+    "speaker": "reyes",
+    "trigger": {
+      "event": "ALL_ABOARD"
+    },
+    "text": "Deck is clear. Switching to the boat.",
+    "priority": 11,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "relief",
+    "audio": "audio/voice/reyes/all_aboard_06.wav"
+  },
+  {
+    "id": "boat_hazard_01",
+    "speaker": "elias",
+    "trigger": {
+      "event": "BOAT_HAZARD"
+    },
+    "text": "Debris on the bow.",
+    "priority": 6,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "urgent",
+    "audio": "audio/voice/elias/boat_hazard_01.wav"
+  },
+  {
+    "id": "boat_hazard_02",
+    "speaker": "tommy",
+    "trigger": {
+      "event": "BOAT_HAZARD"
+    },
+    "text": "Rock! Mind the rock!",
+    "priority": 6,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "urgent",
+    "audio": "audio/voice/tommy/boat_hazard_02.wav"
+  },
+  {
+    "id": "boat_hazard_03",
+    "speaker": "mara",
+    "trigger": {
+      "event": "BOAT_HAZARD"
+    },
+    "text": "Keep in the deepest water.",
+    "priority": 6,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "urgent",
+    "audio": "audio/voice/mara/boat_hazard_03.wav"
+  },
+  {
+    "id": "boat_hazard_04",
+    "speaker": "hollis",
+    "trigger": {
+      "event": "BOAT_HAZARD"
+    },
+    "text": "Watch the break in the waves.",
+    "priority": 6,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "urgent",
+    "audio": "audio/voice/hollis/boat_hazard_04.wav"
+  },
+  {
+    "id": "boat_hazard_05",
+    "speaker": "oduya",
+    "trigger": {
+      "event": "BOAT_HAZARD"
+    },
+    "text": "Give that obstruction room.",
+    "priority": 6,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "urgent",
+    "audio": "audio/voice/oduya/boat_hazard_05.wav"
+  },
+  {
+    "id": "boat_hazard_06",
+    "speaker": "oduya",
+    "trigger": {
+      "event": "BOAT_HAZARD"
+    },
+    "text": "Stay near the lighthouse bearing.",
+    "priority": 6,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "urgent",
+    "audio": "audio/voice/oduya/boat_hazard_06.wav"
+  },
+  {
+    "id": "boat_collision_01",
+    "speaker": "dev",
+    "trigger": {
+      "event": "BOAT_COLLISION"
+    },
+    "text": "We are okay. Keep going.",
+    "priority": 8,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "urgent",
+    "audio": "audio/voice/dev/boat_collision_01.wav"
+  },
+  {
+    "id": "boat_collision_02",
+    "speaker": "hollis",
+    "trigger": {
+      "event": "BOAT_COLLISION"
+    },
+    "text": "Gentle, kid. Gentle.",
+    "priority": 8,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "urgent",
+    "audio": "audio/voice/hollis/boat_collision_02.wav"
+  },
+  {
+    "id": "boat_collision_03",
+    "speaker": "oduya",
+    "trigger": {
+      "event": "BOAT_COLLISION"
+    },
+    "text": "Hull took a hit. Check your heading.",
+    "priority": 8,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "urgent",
+    "audio": "audio/voice/oduya/boat_collision_03.wav"
+  },
+  {
+    "id": "boat_collision_04",
+    "speaker": "oduya",
+    "trigger": {
+      "event": "BOAT_COLLISION"
+    },
+    "text": "We are still moving. Ease back into the channel.",
+    "priority": 8,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "urgent",
+    "audio": "audio/voice/oduya/boat_collision_04.wav"
+  },
+  {
+    "id": "boat_collision_05",
+    "speaker": "mara",
+    "trigger": {
+      "event": "BOAT_COLLISION"
+    },
+    "text": "Hold fast. Keep the bow clear.",
+    "priority": 8,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "urgent",
+    "audio": "audio/voice/mara/boat_collision_05.wav"
+  },
+  {
+    "id": "boat_collision_06",
+    "speaker": "elias",
+    "trigger": {
+      "event": "BOAT_COLLISION"
+    },
+    "text": "Impact below the waterline.",
+    "priority": 8,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "urgent",
+    "audio": "audio/voice/elias/boat_collision_06.wav"
+  },
+  {
+    "id": "lunge_warning_01",
+    "speaker": "ana",
+    "trigger": {
+      "event": "LUNGE_WARNING"
+    },
+    "text": "It is behind us!",
+    "priority": 10,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "panic",
+    "audio": "audio/voice/ana/lunge_warning_01.wav"
+  },
+  {
+    "id": "lunge_warning_02",
+    "speaker": "mara",
+    "trigger": {
+      "event": "LUNGE_WARNING"
+    },
+    "text": "Full throttle, now!",
+    "priority": 10,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "panic",
+    "audio": "audio/voice/mara/lunge_warning_02.wav"
+  },
+  {
+    "id": "lunge_warning_03",
+    "speaker": "oduya",
+    "trigger": {
+      "event": "LUNGE_WARNING"
+    },
+    "text": "See that wake? Turn clear of it.",
+    "priority": 10,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "panic",
+    "audio": "audio/voice/oduya/lunge_warning_03.wav"
+  },
+  {
+    "id": "lunge_warning_04",
+    "speaker": "oduya",
+    "trigger": {
+      "event": "LUNGE_WARNING"
+    },
+    "text": "Break away from its line.",
+    "priority": 10,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "panic",
+    "audio": "audio/voice/oduya/lunge_warning_04.wav"
+  },
+  {
+    "id": "lunge_warning_05",
+    "speaker": "hollis",
+    "trigger": {
+      "event": "LUNGE_WARNING"
+    },
+    "text": "That fin is gaining on us.",
+    "priority": 10,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "panic",
+    "audio": "audio/voice/hollis/lunge_warning_05.wav"
+  },
+  {
+    "id": "lunge_warning_06",
+    "speaker": "jay",
+    "trigger": {
+      "event": "LUNGE_WARNING"
+    },
+    "text": "It followed us from the wreck!",
+    "priority": 10,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "panic",
+    "audio": "audio/voice/jay/lunge_warning_06.wav"
+  },
+  {
+    "id": "island_sighted_01",
+    "speaker": "priya",
+    "trigger": {
+      "event": "ISLAND_SIGHTED"
+    },
+    "text": "Lights. That is land.",
+    "priority": 5,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "hope",
+    "audio": "audio/voice/priya/island_sighted_01.wav"
+  },
+  {
+    "id": "island_sighted_02",
+    "speaker": "jay",
+    "trigger": {
+      "event": "ISLAND_SIGHTED"
+    },
+    "text": "Is that a lighthouse?",
+    "priority": 5,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "hope",
+    "audio": "audio/voice/jay/island_sighted_02.wav"
+  },
+  {
+    "id": "island_sighted_03",
+    "speaker": "oduya",
+    "trigger": {
+      "event": "ISLAND_SIGHTED"
+    },
+    "text": "Harbor ahead. Bring the speed down.",
+    "priority": 5,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "hope",
+    "audio": "audio/voice/oduya/island_sighted_03.wav"
+  },
+  {
+    "id": "island_sighted_04",
+    "speaker": "hollis",
+    "trigger": {
+      "event": "ISLAND_SIGHTED"
+    },
+    "text": "I can see the dock from here.",
+    "priority": 5,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "hope",
+    "audio": "audio/voice/hollis/island_sighted_04.wav"
+  },
+  {
+    "id": "island_sighted_05",
+    "speaker": "mara",
+    "trigger": {
+      "event": "ISLAND_SIGHTED"
+    },
+    "text": "Channel lights. Follow them in.",
+    "priority": 5,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "hope",
+    "audio": "audio/voice/mara/island_sighted_05.wav"
+  },
+  {
+    "id": "island_sighted_06",
+    "speaker": "oduya",
+    "trigger": {
+      "event": "ISLAND_SIGHTED"
+    },
+    "text": "Look for the lights at the dock.",
+    "priority": 5,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "hope",
+    "audio": "audio/voice/oduya/island_sighted_06.wav"
+  },
+  {
+    "id": "landed_01",
+    "speaker": "dev",
+    "trigger": {
+      "event": "LANDED"
+    },
+    "text": "Ana. We are alive.",
+    "priority": 11,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "relief",
+    "audio": "audio/voice/dev/landed_01.wav"
+  },
+  {
+    "id": "landed_02",
+    "speaker": "mara",
+    "trigger": {
+      "event": "LANDED"
+    },
+    "text": "Every one of you counts. Remember that.",
+    "priority": 11,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "relief",
+    "audio": "audio/voice/mara/landed_02.wav"
+  },
+  {
+    "id": "landed_03",
+    "speaker": "oduya",
+    "trigger": {
+      "event": "LANDED"
+    },
+    "text": "We are alongside. Take your time.",
+    "priority": 11,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "relief",
+    "audio": "audio/voice/oduya/landed_03.wav"
+  },
+  {
+    "id": "landed_04",
+    "speaker": "priya",
+    "trigger": {
+      "event": "LANDED"
+    },
+    "text": "One at a time. I can help you up.",
+    "priority": 11,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "relief",
+    "audio": "audio/voice/priya/landed_04.wav"
+  },
+  {
+    "id": "landed_05",
+    "speaker": "oduya",
+    "trigger": {
+      "event": "LANDED"
+    },
+    "text": "Welcome ashore.",
+    "priority": 11,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "relief",
+    "audio": "audio/voice/oduya/landed_05.wav"
+  },
+  {
+    "id": "landed_06",
+    "speaker": "hollis",
+    "trigger": {
+      "event": "LANDED"
+    },
+    "text": "I think I will walk home from here.",
+    "priority": 11,
+    "cooldownMs": 6000,
+    "maxPlays": 1,
+    "emotion": "relief",
+    "audio": "audio/voice/hollis/landed_06.wav"
+  }
+]

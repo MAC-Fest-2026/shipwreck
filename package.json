@@ -1,0 +1,41 @@
+{
+  "name": "shipwreck",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "packageManager": "pnpm@11.5.3",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "lint": "eslint src tests",
+    "test": "vitest run",
+    "e2e": "playwright test",
+    "format": "prettier --write --no-semi src tests *.ts docs",
+    "serve": "node scripts/serve.mjs",
+    "perf": "node scripts/perf.mjs"
+  },
+  "dependencies": {
+    "@dimforge/rapier3d-deterministic-compat": "0.21.0",
+    "@fontsource/barlow-condensed": "5.3.0",
+    "@fontsource/ibm-plex-mono": "5.3.0",
+    "@mediapipe/tasks-vision": "1.2.3",
+    "idb": "8.0.4",
+    "postprocessing": "6.39.6",
+    "preact": "11.2.0",
+    "three": "0.187.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.65.1",
+    "@types/three": "0.187.0",
+    "eslint": "10.15.0",
+    "prettier": "3.10.1",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.73.0",
+    "vite": "8.3.8",
+    "vitest": "5.1.0"
+  }
+}

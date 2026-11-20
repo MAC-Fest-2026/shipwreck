@@ -1,0 +1,10 @@
+* text=auto
+*.sh text eol=lf
+*.mjs text eol=lf
+*.py text eol=lf
+*.wasm binary
+*.task binary
+*.glb binary
+*.wav binary
+*.webp binary
+*.png binary
