@@ -13,5 +13,7 @@ All paths below are included in a normal checkout. Optional source art in the lo
 | `public/mediapipe/gesture_recognizer.task` | Existing bundled MediaPipe gesture recognition model | Retained with the MediaPipe notice; original download metadata was not present |
 | Barlow Condensed and IBM Plex Mono | Installed from pinned `@fontsource` packages and bundled by Vite | `public/notices/Barlow-Condensed.txt`, `IBM-Plex-Mono.txt` |
 | Three.js, Preact, postprocessing, idb | Installed from pinned dependencies | Corresponding files under `public/notices/` |
+| `docs/media/hero.svg`, `systems.svg` | Original project vector illustrations; lettering outlined from the bundled Barlow Condensed and IBM Plex Mono fonts | Corresponding font notices retained under `public/notices/` |
+| `docs/media/mission-preview.gif`, `rescue.png`, `boat.png` | Direct captures of the built-in development replay; software-rendered WebGL2, developer counter hidden | Project gameplay footage; no physical camera footage or performance claim |
 
 Runtime dependencies are locked in `pnpm-lock.yaml`. Preserve the notice directory in deployments. Source provenance gaps above are recorded explicitly rather than assigning new licenses to supplied files.
