@@ -7,8 +7,8 @@ import { clamp, damp, lerp, seededRandom } from '../core/math'
 import { timelines, type Session } from '../game/session'
 import { boatLungePosition, boatLungeTiming } from '../sim/boat'
 import { roster } from '../sim/rescue'
-import { waveHeight } from '../sim/water'
-import { beam, environment, placeBeam } from './environment'
+import { waterGlsl, waveHeight } from '../sim/water'
+import { beam, environment, placeBeam, wreckAtmosphere } from './environment'
 import { claw, cockpit, dock, fitModelScale, hazard, HelicopterModel, light, lighthouse, MODEL_SCALES, person, prepareCruiseWreck, raft,
   rescueVessel, SharkModel, wreck, type ScaledModel } from './models'
 
@@ -50,6 +50,220 @@ function ring(radius: number, color: string) {
   return meshRing
 }
 
+// The outline follows the near-side plating in the scaled ship's local XY plane.
+const wreckTear = [
+  [-14.2, 8.9], [-12.2, 12], [-9.6, 11.8], [-9.5, 14.4], [-6.6, 13.5], [-3, 15.65],
+  [-2.5, 13.9], [0.7, 14.6], [1.6, 13.2], [5.4, 13.3], [8.1, 11.6], [9.4, 9.4],
+  [7.8, 8.15], [7.1, 5.75], [4.9, 6.25], [2.6, 4.05], [0.5, 5.5], [-2.7, 3.3],
+  [-4.5, 4.9], [-7.7, 4.45], [-7.4, 6], [-11, 6.65], [-12.5, 8.2],
+].map(([x, y]) => new T.Vector2(x, y))
+const tearDepth = 4.85
+
+function tearMask(bounds: T.Box2) {
+  const resolution = 128
+  const data = new Uint8Array(resolution ** 2)
+  for (let row = 0; row < resolution; row++) {
+    const y = lerp(bounds.min.y, bounds.max.y, (row + 0.5) / resolution)
+    for (let column = 0; column < resolution; column++) {
+      const x = lerp(bounds.min.x, bounds.max.x, (column + 0.5) / resolution)
+      let inside = false
+      let distanceSq = Infinity
+      for (let i = 0; i < wreckTear.length; i++) {
+        const a = wreckTear[i], b = wreckTear[(i + 1) % wreckTear.length]
+        const dx = b.x - a.x, dy = b.y - a.y
+        const along = clamp(((x - a.x) * dx + (y - a.y) * dy) / (dx * dx + dy * dy))
+        distanceSq = Math.min(distanceSq, (x - a.x - along * dx) ** 2 + (y - a.y - along * dy) ** 2)
+        if ((a.y > y) !== (b.y > y) && x < a.x + (y - a.y) * dx / dy) inside = !inside
+      }
+      data[row * resolution + column] = Math.round(255 * clamp(0.5 + (inside ? -1 : 1) * Math.sqrt(distanceSq) / 4))
+    }
+  }
+  const texture = new T.DataTexture(data, resolution, resolution, T.RedFormat)
+  texture.minFilter = texture.magFilter = T.LinearFilter
+  texture.needsUpdate = true
+  return texture
+}
+
+function damageCruiseShip(ship: T.Object3D, shipFromWorld: T.Matrix4) {
+  const bounds = new T.Box2().setFromPoints(wreckTear).expandByScalar(2)
+  const damageBounds = new T.Box3(new T.Vector3(bounds.min.x, bounds.min.y, tearDepth),
+    new T.Vector3(bounds.max.x, bounds.max.y, 12))
+  const mask = tearMask(bounds)
+  const maskSize = bounds.getSize(new T.Vector2())
+  const meshBounds = new T.Box3()
+  const materials = new Map<T.Material, T.Material>()
+  const cutMaterial = (original: T.Material) => {
+    const existing = materials.get(original)
+    if (existing) return existing
+    const material = original.clone()
+    material.onBeforeCompile = shader => {
+      shader.uniforms.wreckFromWorld = { value: shipFromWorld }
+      shader.uniforms.tearMask = { value: mask }
+      shader.uniforms.tearMin = { value: bounds.min }
+      shader.uniforms.tearSize = { value: maskSize }
+      shader.uniforms.tearDepth = { value: tearDepth }
+      shader.vertexShader = 'uniform mat4 wreckFromWorld; varying vec3 wreckLocal;\n' + shader.vertexShader.replace(
+        '#include <project_vertex>', 'wreckLocal = (wreckFromWorld * (modelMatrix * vec4(transformed, 1.))).xyz;\n#include <project_vertex>')
+      shader.fragmentShader = `uniform sampler2D tearMask; uniform vec2 tearMin, tearSize;
+        uniform float tearDepth; varying vec3 wreckLocal;\n` + shader.fragmentShader.replace('#include <color_fragment>', `
+        #include <color_fragment>
+        vec2 tearUV = (wreckLocal.xy - tearMin) / tearSize;
+        if (wreckLocal.z > tearDepth && all(greaterThan(tearUV, vec2(0.))) && all(lessThan(tearUV, vec2(1.)))) {
+          float edge = texture2D(tearMask, tearUV).r;
+          if (edge < .5) discard;
+          float soot = smoothstep(.52, .89, edge + .065 * sin(wreckLocal.x * 4.2 + wreckLocal.y * 7.7));
+          diffuseColor.rgb *= mix(vec3(.12,.10,.088), vec3(1.), soot);
+        }
+      `)
+    }
+    materials.set(original, material)
+    return material
+  }
+  ship.updateMatrixWorld(true)
+  ship.traverse(node => {
+    if (!(node instanceof T.Mesh)) return
+    const geometry = node.geometry as T.BufferGeometry
+    if (!geometry.boundingBox) geometry.computeBoundingBox()
+    if (!geometry.boundingBox || !meshBounds.copy(geometry.boundingBox).applyMatrix4(node.matrixWorld).intersectsBox(damageBounds)) return
+    node.material = Array.isArray(node.material) ? node.material.map(cutMaterial) : cutMaterial(node.material)
+  })
+
+  // Side walls step inward to a dark, folded steel bulkhead behind the opening.
+  const vertices: number[] = [], colors: number[] = [], indices: number[] = []
+  const rust = new T.Color('#3b322d'), steel = new T.Color('#242a2b'), char = new T.Color('#0d1317')
+  const rng = seededRandom(288)
+  const color = new T.Color()
+  for (let i = 0; i < wreckTear.length; i++) {
+    const p = wreckTear[i]
+    const center = -2.4
+    const side = lerp(7.75, 8.85, smoothstep(p.y, 5.8, 8.2))
+    vertices.push(center + (p.x - center) * 0.996, lerp(9.4, p.y, 0.996), side - 0.12 - rng() * 0.37)
+    vertices.push(lerp(p.x, center, 0.12 + rng() * 0.10), lerp(p.y, 9.4, 0.12 + rng() * 0.12), 6.05 + rng() * 0.50)
+    vertices.push(p.x, p.y, tearDepth + 0.06 + rng() * 0.14)
+    colors.push(...color.copy(rust).lerp(steel, rng()).multiplyScalar(0.45 + rng() * 0.62).toArray(),
+      ...color.copy(steel).lerp(char, rng()).toArray(), ...char.toArray())
+    const k = i * 3, n = ((i + 1) % wreckTear.length) * 3
+    indices.push(k, n, k + 1, n, n + 1, k + 1, k + 1, n + 1, k + 2, n + 1, n + 2, k + 2)
+  }
+  for (const [a, b, c] of T.ShapeUtils.triangulateShape(wreckTear, [])) indices.push(a * 3 + 2, b * 3 + 2, c * 3 + 2)
+  const bentRibs = [
+    [[-11.75, 10.37, 8.7], [-10.75, 10.95, 8.52], [-8.15, 9.6, 7.3], [-7.11, 7.7, 6.5], [-8.83, 8.93, 7.37]],
+    [[-4.4, 13.86, 8.8], [-2.45, 14.16, 8.6], [-1.8, 12, 7.4], [-0.1, 10.9, 6.8], [-3.15, 11.5, 7.4]],
+    [[7.25, 10.8, 8.8], [8.15, 9.6, 8.8], [4.85, 8.6, 7.8], [2.75, 7.2, 6.9], [4, 9.05, 7.3]],
+    [[-0.8, 5.04, 8.05], [0.52, 5.5, 8], [3, 6.7, 7.2], [4.1, 6.9, 7.3], [3.15, 5.97, 7.5]],
+  ]
+  const chippedSteel = new T.Color('#635852')
+  for (const rib of bentRibs) {
+    const k = vertices.length / 3
+    for (const [i, point] of rib.entries()) {
+      vertices.push(...point)
+      colors.push(...color.copy(chippedSteel).lerp(steel, i / (rib.length - 1)).toArray())
+    }
+    indices.push(k, k + 1, k + 2, k, k + 2, k + 4, k + 4, k + 2, k + 3)
+  }
+  const interior = new T.BufferGeometry()
+  interior.setAttribute('position', new T.Float32BufferAttribute(vertices, 3))
+  interior.setAttribute('color', new T.Float32BufferAttribute(colors, 3))
+  interior.setIndex(indices)
+  interior.computeVertexNormals()
+  return new T.Mesh(interior, new T.MeshStandardMaterial({ vertexColors: true, side: T.DoubleSide, roughness: 0.96, flatShading: true }))
+}
+
+// Local Z at the sea plane along the real hull at the start and end of the list.
+// Each row is X, near side intact/listed, far side intact/listed.
+const foamSections = [
+  [-71, 2, 3, -1, -3], [-65, 8.6, 9, -2.7, -6.2], [-57, 9.1, 9.6, -7.3, -8], [-48, 9.1, 9.6, -7.5, -8.4],
+  [-36, 9.1, 8.5, -7.7, -8.9], [-24, 9.1, 7.1, -7.9, -9.1], [-12, 9.1, 7.3, -8.1, -9.1], [0, 9.1, 5.8, -8.3, -9.1],
+  [12, 9.5, 4.3, -8.5, -9.1], [24, 11, 5, -8.7, -7.8], [36, 10.1, 4.2, -8.3, -10.1], [48, 8.6, 1, -6.8, -8.4],
+  [57, 8.2, 0, -4.5, -4], [65, 4.6, -2, -1.5, -2], [71, 0, -2, 0, -2],
+] as const
+
+function wreckFoam() {
+  const subdivisions = 4
+  const segments = (foamSections.length - 1) * subdivisions
+  const positions = new T.BufferAttribute(new Float32Array((segments + 1) * 2 * 2 * 3), 3).setUsage(T.DynamicDrawUsage)
+  const uv: number[] = [], indices: number[] = []
+  for (let side = 0; side < 2; side++) {
+    for (let i = 0; i <= segments; i++) {
+      uv.push(i / segments, 0, i / segments, 1)
+      if (i === segments) continue
+      const j = (side * (segments + 1) + i) * 2
+      indices.push(j, j + 1, j + 2, j + 1, j + 3, j + 2)
+    }
+  }
+  const geometry = new T.BufferGeometry()
+  geometry.setAttribute('position', positions)
+  geometry.setAttribute('uv', new T.Float32BufferAttribute(uv, 2))
+  geometry.setIndex(indices)
+  const time = { value: 0 }, sink = { value: 0 }
+  const material = new T.ShaderMaterial({
+    uniforms: { time, sink }, transparent: true, depthWrite: false, side: T.DoubleSide, forceSinglePass: true,
+    vertexShader: `
+      uniform float time; varying vec2 tex, seaPoint;
+      ${waterGlsl}
+      void main() {
+        tex = uv;
+        vec3 world = (modelMatrix * vec4(position, 1.)).xyz;
+        seaPoint = world.xz;
+        world.y = oceanSample(seaPoint, time).x + .15;
+        gl_Position = projectionMatrix * viewMatrix * vec4(world, 1.);
+      }
+    `,
+    fragmentShader: `
+      uniform float time, sink; varying vec2 tex, seaPoint;
+      float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1,311.7))) * 43758.5453); }
+      float grain(vec2 p) {
+        vec2 cell = floor(p), f = fract(p);
+        f = f*f*(3.-2.*f);
+        return mix(mix(hash(cell), hash(cell+vec2(1,0)), f.x), mix(hash(cell+vec2(0,1)), hash(cell+1.), f.x), f.y);
+      }
+      void main() {
+        float swell = grain(seaPoint * .32 + time * vec2(.24,-.1));
+        float bubbles = grain(seaPoint * 2.4 - time * vec2(.47,.26));
+        float spread = tex.y + (swell-.5)*.45;
+        float lace = (1.-smoothstep(.05,.58,abs(spread-.22))) * smoothstep(.37,.78, .57*bubbles+.43*swell);
+        float ends = smoothstep(.005,.08,tex.x) * (1.-smoothstep(.81-sink*.13,1.-sink*.10,tex.x));
+        float alpha = ends * lace * smoothstep(.0,.16,tex.y) * (1.-smoothstep(.55,1.,tex.y));
+        gl_FragColor = vec4(mix(vec3(.45,.62,.64),vec3(.83,.91,.90),bubbles),alpha * .81);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+      }
+    `,
+  })
+  const mesh = new T.Mesh(geometry, material)
+  mesh.frustumCulled = false
+  mesh.visible = false
+  const p = new T.Vector3(), up = new T.Vector3(), out = new T.Vector3()
+  return {
+    mesh,
+    update(ship: T.Object3D, t: number, list: number) {
+      time.value = t
+      sink.value = list
+      const m = ship.matrixWorld.elements
+      up.set(m[4], m[5], m[6])
+      out.set(m[8], 0, m[10]).normalize()
+      for (let side = 0; side < 2; side++) {
+        const column = side * 2 + 1
+        const direction = side === 0 ? 1 : -1
+        for (let i = 0; i <= segments; i++) {
+          const section = i / subdivisions
+          const a = foamSections[Math.floor(section)], b = foamSections[Math.ceil(section)]
+          const f = section % 1
+          const x = lerp(a[0], b[0], f)
+          const z = lerp(lerp(a[column], a[column + 1], list), lerp(b[column], b[column + 1], list), f)
+          p.set(x, 0, z).applyMatrix4(ship.matrixWorld)
+          p.addScaledVector(up, (waveHeight(p.x, p.z, t) - p.y) / up.y)
+          p.addScaledVector(up, (waveHeight(p.x, p.z, t) - p.y) / up.y)
+          const j = (side * (segments + 1) + i) * 2
+          positions.setXYZ(j, p.x - out.x * direction * 1.0, 0, p.z - out.z * direction * 1.0)
+          positions.setXYZ(j + 1, p.x + out.x * direction * 3.8, 0, p.z + out.z * direction * 3.8)
+        }
+      }
+      positions.needsUpdate = true
+    },
+  }
+}
+
 export class GameRenderer {
   readonly renderer: T.WebGLRenderer
   readonly scene = new T.Scene()
@@ -63,6 +277,10 @@ export class GameRenderer {
   private readonly picker = claw()
   private readonly raft = raft()
   private readonly ship = new T.Group()
+  private readonly shipFromWorld = new T.Matrix4()
+  private readonly wreckWater = wreckFoam()
+  private readonly wreckEffects = wreckAtmosphere()
+  private wreckLoaded = false
   private readonly rescueBoat = rescueVessel()
   private vesselHelm: T.Vector3 | null = null
   private readonly driverHiddenParts: T.Object3D[] = []
@@ -146,7 +364,8 @@ export class GameRenderer {
     this.flashLight.position.set(41, 58, -12)
     this.camera.add(this.cabin.root)
     this.rescueGroup.add(this.helo.root, this.picker.root, this.raft.root, this.ship, this.rescueBoat, this.rope,
-      this.marker, this.schoolBuoy, ...this.people.map(p => p.root), ...this.peopleMarkers, ...this.sharks.map(s => s.root))
+      this.wreckEffects.root, this.wreckWater.mesh, this.marker, this.schoolBuoy,
+      ...this.people.map(p => p.root), ...this.peopleMarkers, ...this.sharks.map(s => s.root))
     this.raft.root.position.x = -32
     this.rescueBoat.position.x = R.deploy
     this.rope.geometry.setAttribute('position', new T.BufferAttribute(new Float32Array(21), 3))
@@ -201,7 +420,9 @@ export class GameRenderer {
       }).catch((error: unknown) => console.warn('[models] Could not load sar-helicopter.glb.', error)),
       loader.loadAsync(path + 'cruise_ship_wreck.glb').then(({ scene }) => {
         this.modelSizes.cruiseShip = prepareCruiseWreck(scene)
-        this.ship.clear().add(scene)
+        const interior = damageCruiseShip(scene, this.shipFromWorld)
+        this.ship.clear().add(scene, interior)
+        this.wreckLoaded = true
       }).catch((error: unknown) => console.warn('[models] Could not load cruise_ship_wreck.glb.', error)),
       loader.loadAsync(path + 'rescue-vessel.glb').then(({ scene }) => {
         this.modelSizes.rescueVessel = fitModelScale('rescueVessel', scene)
@@ -364,6 +585,14 @@ export class GameRenderer {
     const sink = inIntro ? smoothstep(run.elapsed, 0, timelines.intro.duration) : 1
     this.ship.position.set(wreckX, lerp(0.6, -7, sink) + waveHeight(wreckX, wreckZ, t) * 0.22, wreckZ)
     this.ship.rotation.set(lerp(0.42, 0.77, sink), -0.11, lerp(-0.04, -0.12, sink), 'YXZ')
+    const showWreckEffects = this.wreckLoaded && !practice
+    this.wreckEffects.root.visible = this.wreckWater.mesh.visible = showWreckEffects
+    if (showWreckEffects) {
+      this.ship.updateWorldMatrix(true, false)
+      this.shipFromWorld.copy(this.ship.matrixWorld).invert()
+      this.wreckWater.update(this.ship, t, sink)
+      this.wreckEffects.update(this.ship, t, reduced, this.quality === 'low')
+    }
     if (inIntro) {
       this.eye.set(lerp(-58, -25, sink), lerp(27, 21, sink), lerp(88, 70, sink) + spread)
       this.point.set(lerp(-44, -37, sink), lerp(10, 7, sink), -27)
