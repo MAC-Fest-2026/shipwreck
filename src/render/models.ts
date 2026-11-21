@@ -1,7 +1,7 @@
 import * as T from 'three'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import { clone as cloneSkeleton } from 'three/addons/utils/SkeletonUtils.js'
-import { seededRandom } from '../core/math'
+import { clamp, damp, seededRandom } from '../core/math'
 
 // Visual lengths in scene units. Survivors, the wooden board, and the rescue deck are fixed references.
 export const MODEL_SCALES = {
@@ -177,6 +177,107 @@ export function helicopter() {
   oval(root, dark, 0.4, -1.34, 0, 0.41, 0.28, 0.43)
   mergeStaticMeshes(root)
   return { root, rotor, tailRotor }
+}
+
+const rotorPlaybackRate = 1.65
+const tailCyclesPerTake = 36
+
+function flightRotorClip(take: T.AnimationClip) {
+  const tail = take.tracks.find(track => track.name === 'Rotor_Rear_02.quaternion')
+  if (!tail || tail.times.length < 2) return take
+
+  // Take 001 has four main rotor turns and just one tail rotor turn per second.
+  // Repeat the original tail keys within the take so both rotors can run at flight speed.
+  const intervals = tail.times.length - 1
+  const stride = tail.getValueSize()
+  const last = intervals * tailCyclesPerTake
+  const retimed = tail.clone()
+  retimed.times = new Float32Array(last + 1)
+  retimed.values = new Float32Array((last + 1) * stride)
+  for (let cycle = 0; cycle < tailCyclesPerTake; cycle++) {
+    const start = cycle * intervals
+    for (let key = 0; key < intervals; key++) {
+      retimed.times[start + key] = (cycle * take.duration + tail.times[key]) / tailCyclesPerTake
+    }
+    retimed.values.set(tail.values.subarray(0, intervals * stride), start * stride)
+  }
+  retimed.times[last] = take.duration
+  retimed.values.set(tail.values.subarray(intervals * stride), last * stride)
+  return new T.AnimationClip(take.name, take.duration,
+    take.tracks.map(track => track === tail ? retimed : track), take.blendMode)
+}
+
+function spinRotorNodes(main: T.Object3D, tail: T.Object3D) {
+  const revolution = 2 * Math.PI
+  return (dt: number) => {
+    main.rotation.y = (main.rotation.y + dt * revolution * 4 * rotorPlaybackRate) % revolution
+    tail.rotation.z = (tail.rotation.z + dt * revolution * tailCyclesPerTake * rotorPlaybackRate) % revolution
+  }
+}
+
+export class HelicopterModel {
+  readonly root = new T.Group()
+  readonly winch = new T.Object3D()
+  readonly searchlight = new T.Object3D()
+  readonly fallbackSize: ReturnType<typeof fitModelScale>
+  animateRotors: (dt: number) => void
+  private facingRight = false
+  private posed = false
+
+  constructor() {
+    const fallback = helicopter()
+    this.fallbackSize = fitModelScale('helicopter', fallback.root)
+    this.root.add(fallback.root)
+    this.winch.name = 'WinchCableExit'
+    this.searchlight.name = 'SearchlightLens'
+    this.winch.position.set(0.4, -1.625, 0)
+    this.searchlight.position.set(-3, -1, 0.44)
+    fallback.root.add(this.winch, this.searchlight)
+    this.animateRotors = spinRotorNodes(fallback.rotor, fallback.tailRotor)
+  }
+
+  setAsset(art: T.Object3D, clips: T.AnimationClip[]) {
+    art.updateMatrixWorld(true)
+    const size = fitModelScale('helicopter', art)
+    const take = T.AnimationClip.findByName(clips, 'Take 001')
+    if (take) {
+      const mixer = new T.AnimationMixer(art)
+      mixer.clipAction(flightRotorClip(take)).setLoop(T.LoopRepeat, Infinity).setEffectiveTimeScale(rotorPlaybackRate).play()
+      this.animateRotors = dt => { mixer.update(dt) }
+    } else {
+      const main = art.getObjectByName('MainRotor')
+      const tail = art.getObjectByName('TailRotor')
+      if (!main || !tail) throw new Error('Helicopter is missing Take 001 and rotor control nodes.')
+      this.animateRotors = spinRotorNodes(main, tail)
+    }
+    // Mesh measurements in the centered EC-135's local space, before the scene's flight transform.
+    this.winch.position.set(-0.56, -1.75, 0)
+    this.searchlight.position.set(-4.05, -1.59, 0)
+    art.add(this.winch, this.searchlight)
+    oval(this.winch, dark, 0, 0.10, 0, 0.20, 0.12, 0.16)
+    oval(this.searchlight, dark, 0, 0.09, 0, 0.23, 0.105, 0.19)
+    oval(this.searchlight, lamp, 0, 0.018, 0, 0.16, 0.028, 0.135)
+    this.root.clear().add(art)
+    this.animateRotors(0)
+    return size
+  }
+
+  resetHeading() {
+    this.facingRight = false
+    this.posed = false
+  }
+
+  pose(velocity: number, bank: number, dt: number, reduced: boolean) {
+    if (Math.abs(velocity) > 0.8) this.facingRight = velocity > 0
+    // The model faces -X. Hovers retain the last heading, and turns pass through +Z.
+    const heading = this.facingRight ? Math.PI : 0
+    const yaw = this.posed ? damp(this.root.rotation.y, heading, 9, dt) : heading
+    const roll = reduced ? 0 : clamp((heading - yaw) * 0.055, -0.12, 0.12)
+    const pitch = this.posed ? damp(this.root.rotation.z, bank, 10, dt) : bank
+    // Apply the simulation's bank in the world travel plane, even while the model is turning.
+    this.root.rotation.set(roll, yaw, pitch, 'ZYX')
+    this.posed = true
+  }
 }
 
 export function claw() {

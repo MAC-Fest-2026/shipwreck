@@ -9,7 +9,7 @@ import { boatLungePosition, boatLungeTiming } from '../sim/boat'
 import { roster } from '../sim/rescue'
 import { waveHeight } from '../sim/water'
 import { beam, environment, placeBeam } from './environment'
-import { claw, cockpit, dock, fitModelScale, hazard, helicopter, light, lighthouse, MODEL_SCALES, person, raft,
+import { claw, cockpit, dock, fitModelScale, hazard, HelicopterModel, light, lighthouse, MODEL_SCALES, person, raft,
   rescueVessel, SharkModel, wreck, type ScaledModel } from './models'
 
 export type Quality = 'low' | 'medium' | 'high'
@@ -57,7 +57,7 @@ export class GameRenderer {
   private readonly upperLight = new T.HemisphereLight('#b3d8eb', '#414545', 2.48)
   private readonly rim = new T.DirectionalLight('#ffc28a', 2.35)
   private readonly flashLight = new T.DirectionalLight('#acd9ff', 0)
-  private readonly helo: ReturnType<typeof helicopter>
+  private readonly helo = new HelicopterModel()
   private readonly picker = claw()
   private readonly raft = raft()
   private readonly ship = wreck()
@@ -84,6 +84,9 @@ export class GameRenderer {
   private readonly boatGroup = new T.Group()
   private readonly obstacles = new T.Group()
   private readonly rope = new T.Line(new T.BufferGeometry(), new T.LineBasicMaterial({ color: '#b5a998' }))
+  private readonly winchStart = new T.Vector3()
+  private readonly beamSource = new T.Vector3()
+  private readonly beamTarget = new T.Vector3()
   private readonly narrowFog = new T.FogExp2('#40606a', 0.008)
   private readonly rainGeometry = new T.BufferGeometry()
   private readonly rain = new T.LineSegments(this.rainGeometry,
@@ -106,11 +109,9 @@ export class GameRenderer {
   get stats() { return { fps: this.fps, calls: this.renderer.info.render.calls, triangles: this.renderer.info.render.triangles, scale: this.scale } }
 
   constructor(container: HTMLElement, onContext: (lost: boolean) => void) {
-    const heloModel = helicopter()
-    this.helo = { ...heloModel, root: new T.Group().add(heloModel.root) }
     this.modelSizes = {
       rescueVessel: fitModelScale('rescueVessel', this.rescueBoat),
-      helicopter: fitModelScale('helicopter', heloModel.root),
+      helicopter: this.helo.fallbackSize,
       cruiseShip: fitModelScale('cruiseShip', this.ship),
       island: fitModelScale('island', this.island),
       rocks: fitModelScale('rocks', hazard('reef', MODEL_SCALES.rocks.referenceRadius)),
@@ -192,15 +193,9 @@ export class GameRenderer {
         const sizes = models.map(model => model.setAsset(scene, animations))
         this.modelSizes[kind] = sizes[0]
       }).catch((error: unknown) => console.warn(`[models] Could not load ${file}.`, error))),
-      loader.loadAsync(path + 'sar-helicopter.glb').then(({ scene }) => {
-        const rotor = scene.getObjectByName('MainRotor')
-        const tail = scene.getObjectByName('TailRotor')
-        if (!rotor || !tail) return
-        this.modelSizes.helicopter = fitModelScale('helicopter', scene)
-        this.helo.root.clear().add(scene)
-        this.helo.rotor = rotor as T.Group
-        this.helo.tailRotor = tail as T.Group
-      }),
+      loader.loadAsync(path + 'sar-helicopter.glb').then(({ scene, animations }) => {
+        this.modelSizes.helicopter = this.helo.setAsset(scene, animations)
+      }).catch((error: unknown) => console.warn('[models] Could not load sar-helicopter.glb.', error)),
       loader.loadAsync(path + 'rescue-vessel.glb').then(({ scene }) => {
         this.modelSizes.rescueVessel = fitModelScale('rescueVessel', scene)
         // The GLB's recovery deck is aft of its origin. Align it to the existing drop zone at full scale.
@@ -290,13 +285,15 @@ export class GameRenderer {
     this.env.uniforms.search.value = this.rescueBeam.mesh.visible ? 0.7 : 0
     this.meg.root.visible = false
     this.meg.swimSpeed = 1
+    const animationDt = run.paused || run.autoStop || run.record ? 0 : dt
+    if (newPhase && (run.phase === 'arrival' || arrival)) this.helo.resetHeading()
     let desiredFov = 44
     if (isRescue) {
-      desiredFov = this.drawRescue(run, t, departure, settings.reduceMotion)
+      desiredFov = this.drawRescue(run, t, departure, settings.reduceMotion, animationDt)
     } else {
-      desiredFov = this.drawBoat(run, t, arrival, settings.reduceMotion)
+      desiredFov = this.drawBoat(run, t, arrival, settings.reduceMotion, animationDt)
     }
-    const animationDt = run.paused || run.autoStop || run.record ? 0 : dt
+    this.helo.animateRotors(animationDt)
     if (isRescue) this.sharks.forEach(shark => shark.animate(animationDt))
     this.meg.animate(animationDt)
     const weight = firstPerson || !this.initialized || newPhase && (arrival || run.phase === 'rescue') ? 1 : 1 - Math.exp(-dt * 3.6)
@@ -330,6 +327,7 @@ export class GameRenderer {
   private loadRun(run: Session) {
     this.lastRun = run
     this.initialized = false
+    this.helo.resetHeading()
     this.nextSharkBite = 0
     this.sharks.forEach(shark => shark.resetAnimation())
     this.meg.resetAnimation()
@@ -343,7 +341,7 @@ export class GameRenderer {
     }
   }
 
-  private drawRescue(run: Session, t: number, departure: boolean, reduced: boolean) {
+  private drawRescue(run: Session, t: number, departure: boolean, reduced: boolean, dt: number) {
     const r = run.rescue
     const inIntro = run.phase === 'intro'
     const inArrival = run.phase === 'arrival'
@@ -390,28 +388,37 @@ export class GameRenderer {
     }
     this.ship.visible = !practice
     this.helo.root.visible = !inIntro
-    this.helo.root.position.set(inArrival ? r.x - (8 - run.elapsed) ** 2 * 1.15 : r.x, r.altitude, 0)
-    this.helo.root.rotation.z = r.bank
-    this.helo.root.rotation.y = -0.16
-    this.helo.rotor.rotation.y = t * 29
-    this.helo.tailRotor.rotation.z = t * 51
+    const approachTime = 8 - run.elapsed
+    this.helo.root.position.set(inArrival ? r.x - approachTime ** 2 * 1.15 : r.x, r.altitude, 0)
+    if (this.helo.root.visible) {
+      this.helo.pose(inArrival ? approachTime * 2.3 : departure ? 0 : r.velocity,
+        inArrival ? 0.065 * clamp(approachTime) : departure ? 0 : r.bank, dt, reduced)
+    }
     this.picker.root.visible = !inIntro && !inArrival
     this.picker.root.position.set(r.clawX, r.clawY, 0)
     this.picker.root.rotation.z = -r.swing
     this.picker.jaws.forEach(jaw => { jaw.rotation.z = lerp(0.39, -0.54, r.gripProgress) })
-    const rope = this.rope.geometry.attributes.position
-    for (let i = 0; i < rope.count; i++) {
-      const k = i / (rope.count - 1)
-      rope.setXYZ(i, lerp(r.x + 0.36, r.clawX, k) + 2 * r.swing * Math.sin(k * Math.PI),
-        lerp(r.altitude - 1.31, r.clawY + 0.27, k), 0)
-    }
-    rope.needsUpdate = true
     this.rope.visible = this.picker.root.visible
-    const source = new T.Vector3(this.helo.root.position.x - 2.73, r.altitude - 0.79, 0.61)
-    const target = new T.Vector3(this.helo.root.position.x - 7.6 + Math.sin(t * 0.8) * 2.8, 0, -0.6)
-    placeBeam(this.rescueBeam.mesh, source, target)
-    this.env.uniforms.contact.value.copy(target)
-    this.rescueBeam.intensity.value = 0.39
+    if (this.rope.visible) {
+      const winch = this.helo.winch.getWorldPosition(this.winchStart)
+      const rope = this.rope.geometry.attributes.position
+      for (let i = 0; i < rope.count; i++) {
+        const k = i / (rope.count - 1)
+        rope.setXYZ(i, lerp(winch.x, r.clawX, k) + 2 * r.swing * Math.sin(k * Math.PI),
+          lerp(winch.y, r.clawY + 0.27, k), lerp(winch.z, 0, k))
+      }
+      rope.needsUpdate = true
+    }
+    if (this.rescueBeam.mesh.visible) {
+      const lamp = this.helo.searchlight.getWorldPosition(this.beamSource)
+      const sweep = this.helo.root.rotation.y + Math.sin(t * 0.8) * 0.36
+      const x = lamp.x - Math.cos(sweep) * 4.7
+      const z = lamp.z + Math.sin(sweep) * 4.7
+      this.beamTarget.set(x, waveHeight(x, z, t), z)
+      placeBeam(this.rescueBeam.mesh, lamp, this.beamTarget)
+      this.env.uniforms.contact.value.copy(this.beamTarget)
+      this.rescueBeam.intensity.value = 0.39
+    }
     this.marker.visible = this.picker.root.visible && !departure
     this.marker.position.set(r.clawX, waveHeight(r.clawX, 0, t) + 0.1, 0)
     this.marker.material.color.copy(r.grabbable().length ? amber : cyan)
@@ -476,7 +483,7 @@ export class GameRenderer {
     return fov
   }
 
-  private drawBoat(run: Session, t: number, arrival: boolean, reduced: boolean) {
+  private drawBoat(run: Session, t: number, arrival: boolean, reduced: boolean, dt: number) {
     const b = run.boat
     if (arrival) {
       const path = clamp(run.elapsed / 12)
@@ -488,7 +495,7 @@ export class GameRenderer {
       const visible = this.rescueGroup.children
       visible.forEach(item => { item.visible = item === this.rescueBoat || item === this.helo.root || this.people.some(p => p.root === item) })
       this.helo.root.position.set(12 - path * 37, 18 + path * 2, -931)
-      this.helo.rotor.rotation.y = t * 29
+      this.helo.pose(-37 / 12, -0.054, dt, reduced)
       let disembarking = 0
       this.people.forEach(({ root, arms }, i) => {
         root.visible = run.rescue.survivors[i]?.state === 'saved'
