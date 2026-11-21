@@ -78,12 +78,12 @@ export class Rescue {
   get overDeck() { return Math.abs(this.clawX - R.deploy) <= R.deckWidth / 2 }
   get jammed() { return this.time < this.jamUntil }
 
-  survivorY(s: Survivor) {
+  survivorY(s: Survivor, waveTime = this.time) {
     if (s.state === 'falling') return s.fallY
     if (s.state === 'saved') return this.deckY + 1.1
     return s.state === 'debris'
-      ? waveHeight(-32, 0, this.time) + 1.45
-      : waveHeight(s.x, s.z, this.time) + 0.75
+      ? waveHeight(-32, 0, waveTime) + 1.45
+      : waveHeight(s.x, s.z, waveTime) + 0.75
   }
 
   grabbable(horizontal = R.grabX, vertical = R.grabY) {

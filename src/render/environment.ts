@@ -1,6 +1,6 @@
 import * as T from 'three'
 import { seededRandom } from '../core/math'
-import { waterGlsl, waveHeight } from '../sim/water'
+import { waterGlsl, waveAmplitude, waveHeight } from '../sim/water'
 
 const noise = `
 float rand2(vec2 p) { return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453); }
@@ -15,6 +15,11 @@ float fbm(vec2 p) {
 }
 `
 
+const skyColors = `
+vec3 horizonColor(float dawn) { return mix(vec3(.20,.316,.358), vec3(.55,.42,.31), dawn); }
+vec3 zenithColor(float dawn) { return mix(vec3(.024,.083,.124), vec3(.15,.26,.31), dawn); }
+`
+
 export type SceneUniforms = {
   time: { value: number }
   dawn: { value: number }
@@ -22,6 +27,11 @@ export type SceneUniforms = {
   fog: { value: number }
   contact: { value: T.Vector3 }
   search: { value: number }
+  sunDirection: { value: T.Vector3 }
+  shoal: { value: T.Vector4 }
+  boardFoam: { value: T.Vector3 }
+  hullFoamPose: { value: T.Vector4 }
+  hullFoamSize: { value: T.Vector3 }
 }
 
 export interface SceneEnvironment {
@@ -44,16 +54,19 @@ export function environmentSettings(): SceneUniforms {
   return {
     time: { value: 0 }, dawn: { value: 0 }, flash: { value: 0 },
     fog: { value: 0.0048 }, contact: { value: new T.Vector3(-14, 0, 0) },
-    search: { value: 0.0 },
+    search: { value: 0 }, sunDirection: { value: new T.Vector3(-0.34, 0.11, -0.93).normalize() },
+    shoal: { value: new T.Vector4(0, 0, 1, 1) }, boardFoam: { value: new T.Vector3() },
+    hullFoamPose: { value: new T.Vector4(0, 0, 1, 0) }, hullFoamSize: { value: new T.Vector3(1, 1, 0) },
   }
 }
 
 export function seaGeometry() {
-  const geom = new T.PlaneGeometry(2, 2, 176, 176)
+  const geom = new T.PlaneGeometry(2, 2, 224, 224)
   geom.rotateX(-Math.PI / 2)
   const vertices = geom.attributes.position
+  // Keep close to 1.25-unit spacing around the action and stretch toward the horizon.
+  const shape = (n: number) => 140 * n + 1298 * n ** 13
   for (let i = 0; i < vertices.count; i++) {
-    const shape = (n: number) => 138 * n + 1300 * n ** 7
     vertices.setXYZ(i, shape(vertices.getX(i)), 0, shape(vertices.getZ(i)))
   }
   return geom
@@ -62,53 +75,102 @@ export function seaGeometry() {
 export function environment(scene: T.Scene): SceneEnvironment {
   const uniforms = environmentSettings()
   const sea = new T.Mesh(seaGeometry(), new T.ShaderMaterial({
-    uniforms,
+    uniforms: { ...uniforms, waterDetail: { value: waterDetailTexture() },
+      crestScale: { value: 1 / Math.max(waveAmplitude, 0.001) } },
     vertexShader: `
       uniform float time;
       varying vec3 world;
+      varying vec2 waveSlope;
       ${waterGlsl}
-      void main(){
-        world=(modelMatrix*vec4(position,1.)).xyz;
-        world.y=oceanSample(world.xz,time).x;
-        gl_Position=projectionMatrix*viewMatrix*vec4(world,1.);
+      void main() {
+        world = (modelMatrix * vec4(position,1.)).xyz;
+        vec3 wave = oceanSample(world.xz, time);
+        world.y = wave.x;
+        waveSlope = wave.yz;
+        gl_Position = projectionMatrix * viewMatrix * vec4(world,1.);
       }
     `,
     fragmentShader: `
-      uniform float time,dawn,flash,fog,search;
-      uniform vec3 contact;
+      uniform float time, dawn, flash, fog, search, crestScale;
+      uniform vec3 contact, sunDirection, boardFoam, hullFoamSize;
+      uniform vec4 shoal, hullFoamPose;
+      uniform sampler2D waterDetail;
       varying vec3 world;
-      ${waterGlsl}
-      ${noise}
-      void main(){
-        vec2 p=world.xz;
-        vec3 w=oceanSample(p,time);
-        vec2 micro=vec2(
-          sin(p.x*2.8+p.y*1.3-time*2.6) + .34*sin(p.y*9.-p.x*6.+time*4.1),
-          cos(p.y*2.4-p.x*.8+time*2.5) + .34*sin(p.y*6.+p.x*3.-time*5.)
-        );
-        float dist=length(cameraPosition-world);
-        float closeFade=1.-smoothstep(90.,250.,dist);
-        vec3 n=normalize(vec3(-w.y+.07*micro.x*closeFade,1.,-w.z+.07*micro.y*closeFade));
-        vec3 v=normalize(cameraPosition-world);
-        float fresnel=pow(1.-max(0.,dot(n,v)),3.25);
-        vec3 storm=vec3(.024,.115,.145);
-        vec3 col=mix(storm*mix(.54,1.48,clamp(.51+w.x*.48,0.,1.)),vec3(.19,.34,.39),fresnel*.63);
-        float fleck=fbm(p*1.06+vec2(time*.15,-time*.089));
-        float ridge=smoothstep(.41,.84,w.x+.18*noise2(p*.31));
-        float detail=smoothstep(.41,.77,fleck);
-        float fizz=smoothstep(.47,.71,noise2(p*4.5+vec2(.31,-.13)*time));
-        float foam=ridge*(.05+.70*detail+.19*fizz)+smoothstep(.70,.91,fleck)*smoothstep(.12,.55,w.x)*.43;
-        float rotor=exp(-abs(length(p-contact.xz)-7.)*.76)*(.16+.43*fleck)*search;
-        col=mix(col,vec3(.58,.73,.71),clamp(foam+rotor,0.,.68));
-        float pool=exp(-dot(p-contact.xz,p-contact.xz)*.031)*search;
-        col+=vec3(.43,.23,.075)*pool*(.3+.7*detail);
-        vec3 beam=normalize(vec3(.52,.22,-.83));
-        float spec=pow(max(0.,dot(n,normalize(v+beam))),27.);
-        col+=spec*mix(vec3(.18,.30,.34),vec3(.55,.36,.15),dawn);
-        col+=vec3(.2,.28,.35)*flash*(.24+spec);
-        float mist=1.-exp(-dist*fog);
-        vec3 horizon=mix(vec3(.200,.316,.358),vec3(.55,.42,.31),dawn);
-        gl_FragColor=vec4(mix(col,horizon,clamp(mist,.0,1.)),1.);
+      varying vec2 waveSlope;
+      ${skyColors}
+
+      float boxEdge(vec2 p, vec2 halfSize) {
+        vec2 q = abs(p) - halfSize;
+        return length(max(q, 0.)) + min(max(q.x, q.y), 0.);
+      }
+
+      float wash(float edge, float width, float grain) {
+        float brokenEdge = edge + (grain - .5) * .75;
+        return smoothstep(-.51, -.12, edge) * (1. - smoothstep(.02, width, brokenEdge))
+          * smoothstep(.32, .72, grain);
+      }
+
+      void main() {
+        vec2 p = world.xz;
+        vec3 toEye = cameraPosition - world;
+        float dist = length(toEye);
+        vec3 eye = toEye / max(dist, .001);
+        mat2 turn = mat2(.8, .6, -.6, .8);
+        // The tile stores surface slopes in RG and foam grain in B.
+        vec3 ripples = texture2D(waterDetail, p * .073 + time * vec2(.011, -.017)).rgb;
+        vec3 fizz = texture2D(waterDetail, turn * p * .31 + time * vec2(-.051, .027)).rgb;
+        float nearDetail = 1. - smoothstep(38., 185., dist);
+        vec2 detailSlope = (ripples.rg - .5) * .24 + ((fizz.rg - .5) * turn) * .115;
+        vec2 slope = waveSlope + detailSlope * nearDetail;
+        vec3 normal = normalize(vec3(-slope.x, 1., -slope.y));
+        float elevation = world.y * crestScale;
+
+        // Approximate the seabed with a shelf around the island and deep water offshore.
+        vec2 fromShore = (p - shoal.xy) * shoal.zw;
+        float seabedDepth = mix(2.5, 56., smoothstep(.72, 2.2, dot(fromShore, fromShore)));
+        float absorption = 1. - exp(-max(0., seabedDepth + world.y) * .078);
+        vec3 shallow = mix(vec3(.06,.22,.22), vec3(.085,.37,.31), dawn);
+        vec3 deep = mix(vec3(.015,.081,.119), vec3(.027,.118,.15), dawn);
+        vec3 body = mix(shallow, deep, absorption) * mix(.68, 1.29, smoothstep(-.82, .73, elevation));
+
+        vec3 horizon = horizonColor(dawn);
+        vec3 reflected = reflect(-eye, normal);
+        vec3 sky = mix(horizon, zenithColor(dawn), smoothstep(0., .62, reflected.y));
+        float grazing = 1. - max(0., dot(normal, eye));
+        float fresnel = .026 + .78 * pow(grazing, 4.);
+        vec3 color = mix(body, sky, fresnel);
+        float highlight = max(0., dot(normal, normalize(eye + sunDirection)));
+        float glint = pow(highlight, 94.) * .72 + pow(highlight, 16.) * .09;
+        color += mix(vec3(.23,.36,.43), vec3(1.,.69,.36), dawn) * glint * (.43 + 1.05*dawn);
+
+        float grain = mix(ripples.b, fizz.b, .44);
+        float crest = smoothstep(.38, .83, elevation + (grain - .5) * .34);
+        float foam = crest * smoothstep(.33, .75, grain) * .79;
+        vec2 fromBoard = p - boardFoam.xy;
+        if (boardFoam.z > 0. && all(lessThan(abs(fromBoard), vec2(7., 4.5)))) {
+          foam = max(foam, wash(boxEdge(fromBoard, vec2(4.85,1.95)) - .38, 1.25, grain) * boardFoam.z);
+        }
+        vec2 fromHull = p - hullFoamPose.xy;
+        float reach = hullFoamSize.x + 2.5;
+        if (hullFoamSize.z > 0. && dot(fromHull, fromHull) < reach * reach) {
+          vec2 forward = hullFoamPose.zw;
+          vec2 along = vec2(dot(fromHull, forward), dot(fromHull, vec2(-forward.y, forward.x)));
+          float taper = 1. - .90 * smoothstep(.12, 1., along.x / hullFoamSize.x);
+          float edge = boxEdge(along, vec2(hullFoamSize.x, hullFoamSize.y * taper)) - .23;
+          foam = max(foam, wash(edge, 1.65, grain) * hullFoamSize.z);
+        }
+        if (search > 0.) {
+          vec2 underHelicopter = p - contact.xz;
+          float pool = exp(-dot(underHelicopter, underHelicopter) * .031) * search;
+          float rotor = exp(-abs(length(underHelicopter) - 7.) * .76) * grain * search;
+          foam = max(foam, rotor);
+          color += vec3(.43,.23,.075) * pool * (.3 + .7 * grain);
+        }
+        color = mix(color, mix(vec3(.54,.68,.70), vec3(.83,.83,.71), dawn), clamp(foam, 0., .84));
+        color += vec3(.2,.28,.35) * flash * (.24 + glint);
+        float mist = 1. - exp(-dist * fog);
+        gl_FragColor = sRGBTransferEOTF(vec4(mix(color, horizon, mist), 1.));
+        #include <colorspace_fragment>
       }
     `,
   }))
@@ -126,23 +188,26 @@ export function environment(scene: T.Scene): SceneEnvironment {
     `,
     fragmentShader: `
       uniform float time,dawn,flash;
+      uniform vec3 sunDirection;
       varying vec3 ray;
       ${noise}
+      ${skyColors}
       void main() {
         vec3 dir=normalize(ray);
         float y=max(0.,dir.y);
         vec2 p=dir.xz/(.31+y)*2.7;
         float cloud=fbm(p+vec2(.009*time,-.004*time));
         float bands=fbm(p*.42+cloud*.51);
-        vec3 horizon=mix(vec3(.200,.316,.358), vec3(.55,.42,.31), dawn);
-        vec3 zenith=mix(vec3(.024,.083,.124), vec3(.15,.26,.31), dawn);
+        vec3 horizon=horizonColor(dawn);
+        vec3 zenith=zenithColor(dawn);
         vec3 col=mix(horizon,zenith,smoothstep(0.,.65,y));
         col*=mix(.58,1.24,smoothstep(.195,.70,cloud*.72+bands*.28));
-        float sunset=pow(max(0.,dot(dir,normalize(vec3(-.34,.035,-.93)))),12.)*exp(-y*6.);
+        float sunset=pow(max(0.,dot(dir,sunDirection)),12.)*exp(-y*6.);
         col+=mix(vec3(.115,.066,.035),vec3(.61,.32,.10),dawn)*sunset;
         col=mix(horizon,col,smoothstep(0.,.038,y));
         col+=vec3(.30,.39,.51)*flash*(.4+cloud);
-        gl_FragColor=vec4(col,1.);
+        gl_FragColor=sRGBTransferEOTF(vec4(col,1.));
+        #include <colorspace_fragment>
       }
     `,
   }))
@@ -151,9 +216,9 @@ export function environment(scene: T.Scene): SceneEnvironment {
   return { sea, sky, uniforms }
 }
 
-function particleNoiseTexture() {
-  const size = 64, cells = 8, cellSize = size / cells
-  const random = seededRandom(68)
+function noiseTile(size: number, cells: number, seed: number) {
+  const cellSize = size / cells
+  const random = seededRandom(seed)
   const grid = Float32Array.from({ length: cells * cells }, random)
   const pixels = new Uint8Array(size * size)
   const { lerp, smoothstep } = T.MathUtils
@@ -169,7 +234,35 @@ function particleNoiseTexture() {
         lerp(grid[nextRow + col], grid[nextRow + nextCol], tx), ty)
     }
   }
-  const texture = new T.DataTexture(pixels, size, size, T.RedFormat)
+  return pixels
+}
+
+function waterDetailTexture() {
+  const size = 128
+  const noise = noiseTile(size, 16, 137)
+  const data = new Uint8Array(size * size * 4)
+  const sample = (x: number, y: number) => noise[((y + size) % size) * size + (x + size) % size]
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const i = (y * size + x) * 4
+      data[i] = T.MathUtils.clamp(128 + (sample(x + 1, y) - sample(x - 1, y)) * 1.5, 0, 255)
+      data[i + 1] = T.MathUtils.clamp(128 + (sample(x, y + 1) - sample(x, y - 1)) * 1.5, 0, 255)
+      data[i + 2] = sample(x, y)
+      data[i + 3] = 255
+    }
+  }
+  const texture = new T.DataTexture(data, size, size)
+  texture.wrapS = texture.wrapT = T.RepeatWrapping
+  texture.minFilter = T.LinearMipmapLinearFilter
+  texture.magFilter = T.LinearFilter
+  texture.generateMipmaps = true
+  texture.needsUpdate = true
+  return texture
+}
+
+function particleNoiseTexture() {
+  const size = 64
+  const texture = new T.DataTexture(noiseTile(size, 8, 68), size, size, T.RedFormat)
   texture.wrapS = texture.wrapT = T.RepeatWrapping
   texture.minFilter = texture.magFilter = T.LinearFilter
   texture.needsUpdate = true

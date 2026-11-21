@@ -24,6 +24,9 @@ const wreckX = -42
 const wreckZ = -52
 // Authored GLB coordinates. The bow points along +X.
 const wheelhouseEye = new T.Vector3(6.52, 3.72, 0)
+// Waterline measured after the rescue vessel is aligned to the recovery deck.
+const vesselWaterline = { center: 4.4, halfLength: 7.96, halfBeam: 2.83 }
+const fallbackWaterline = { center: 4.25, halfLength: 6.25, halfBeam: 1.75 }
 // Replace the exterior window assembly with slimmer pillars for the interior view.
 const wheelhouseOccluders = new Set([
   'Laminated_pilothouse_lights', 'Formed_window_apertures', 'Ceramic_obscuration_bands',
@@ -331,15 +334,18 @@ export class GameRenderer {
   constructor(container: HTMLElement, onContext: (lost: boolean) => void) {
     const fallbackShip = wreck()
     this.ship.add(fallbackShip)
+    const islandSize = fitModelScale('island', this.island)
     this.modelSizes = {
       rescueVessel: fitModelScale('rescueVessel', this.rescueBoat),
       helicopter: this.helo.fallbackSize,
       cruiseShip: fitModelScale('cruiseShip', fallbackShip),
-      island: fitModelScale('island', this.island),
+      island: islandSize,
       rocks: fitModelScale('rocks', hazard('reef', MODEL_SCALES.rocks.referenceRadius)),
     }
     this.rescueBoat.add(this.deckPassengers)
     this.island.position.set(31, 0, -950)
+    this.env.uniforms.shoal.value.set(this.island.position.x, this.island.position.z,
+      1 / (islandSize.length * 0.5 + 12), 1 / (islandSize.width * 0.5 + 18))
     this.lightBeam = beam(this.island, '#ffbf65')
 
     this.renderer = new T.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' })
@@ -521,6 +527,14 @@ export class GameRenderer {
     } else {
       desiredFov = this.drawBoat(run, t, arrival, settings.reduceMotion, animationDt)
     }
+    const raft = this.raft.root
+    const boardWash = isRescue && raft.visible ? 1 - 0.8 * clamp((t - run.rescue.breachedAt) / 5) : 0
+    this.env.uniforms.boardFoam.value.set(raft.position.x, raft.position.z, boardWash)
+    const { rotation, position, visible } = this.rescueBoat
+    const { center, halfLength, halfBeam } = this.vesselHelm ? vesselWaterline : fallbackWaterline
+    const forwardX = Math.cos(rotation.y), forwardZ = -Math.sin(rotation.y)
+    this.env.uniforms.hullFoamPose.value.set(position.x + forwardX * center, position.z + forwardZ * center, forwardX, forwardZ)
+    this.env.uniforms.hullFoamSize.value.set(halfLength, halfBeam, visible ? 0.82 + 0.18 * clamp(run.boat.speed / 16) : 0)
     this.helo.animateRotors(animationDt)
     if (isRescue) this.sharks.forEach(shark => shark.animate(animationDt))
     this.meg.animate(animationDt)
@@ -542,7 +556,8 @@ export class GameRenderer {
       this.deckMarker.offscreen = deck.x > 0.83 || deck.x < -0.82
     }
     this.env.sky.position.copy(this.camera.position)
-    this.env.sea.position.set(Math.round(this.camera.position.x / 18) * 18, 0, Math.round(this.camera.position.z / 18) * 18)
+    // Center the dense water grid on the action with steps aligned to its 1.25-unit cells.
+    this.env.sea.position.set(Math.round(this.scratch.x / 20) * 20, 0, Math.round(this.scratch.z / 20) * 20)
     this.rain.visible = !arrival
     if (this.rain.visible) this.drawRain(t, settings.reduceMotion)
     this.initialized = true
@@ -687,7 +702,7 @@ export class GameRenderer {
       if (root.parent !== parent) parent.add(root)
       if (saved) root.position.copy(this.deckSlots[index])
       else root.position.set(i >= 0 ? r.clawX + (i - 0.5) * 0.59 : s.x,
-        i >= 0 ? r.clawY - 2.2 : r.survivorY(s) - 1.22, i >= 0 ? 0.1 : s.z)
+        i >= 0 ? r.clawY - 2.2 : r.survivorY(s, t) - 1.22, i >= 0 ? 0.1 : s.z)
       root.rotation.z = Math.sin(t * 3.7 + index) * (floating ? 0.23 : 0.074)
       root.rotation.y = Math.sin(index * 15.13) * 0.52
       arms[0].rotation.z = 0.55 + Math.sin(t * 2.75 + index) * 0.3
@@ -729,7 +744,7 @@ export class GameRenderer {
       this.eye.set(-18 + path * 8, 10 + path * 6, -872 - path * 7)
       this.point.set(13, 6 + path * 5, -926)
       this.rescueGroup.visible = true
-      this.rescueBoat.position.set(2.8, waveHeight(1, -902, t), -903)
+      this.rescueBoat.position.set(2.8, waveHeight(2.8, -903, t), -903)
       this.rescueBoat.rotation.set(0, Math.PI / 2, 0, 'XYZ')
       const visible = this.rescueGroup.children
       visible.forEach(item => { item.visible = item === this.rescueBoat || item === this.helo.root || this.people.some(p => p.root === item) })

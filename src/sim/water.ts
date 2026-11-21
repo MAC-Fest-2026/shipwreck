@@ -1,3 +1,4 @@
+// Ocean settings. Both simulation heights and the GLSL surface use these waves.
 export const waves = [
   // dir X, dir Z, amplitude, radians/m, radians/sec
   [0.37, 0.929, 0.51, 0.155, 1.13],
@@ -5,6 +6,8 @@ export const waves = [
   [0.94, 0.341, 0.14, 0.47, 1.9],
   [-0.24, 0.971, 0.09, 0.87, 2.3],
 ] as const
+
+export const waveAmplitude = waves.reduce((sum, [, , amplitude]) => sum + Math.abs(amplitude), 0)
 
 // Height-field form of Gerstner. CPU queries use world X/Z directly.
 export function waveHeight(x: number, z: number, t: number) {
@@ -15,14 +18,20 @@ export function waveHeight(x: number, z: number, t: number) {
   return height
 }
 
+const glslFloat = (value: number) => Number.isInteger(value) ? `${value}.0` : String(value)
+
+// The sample returns height followed by the two analytical slopes.
 export const waterGlsl = `
 vec3 oceanSample(vec2 p, float t) {
   vec3 result = vec3(0.);
-  ${waves.map(([x, z, amplitude, k, speed]) => `{
+  ${waves.map(wave => {
+    const [x, z, amplitude, k, speed] = wave.map(glslFloat)
+    return `{
     vec2 dir = vec2(${x}, ${z});
-    float phase = dot(dir,p)*${k} - t*${speed};
-    result += vec3(${amplitude}*sin(phase), ${amplitude * k}*cos(phase)*dir);
-  }`).join('\n')}
+    float phase = dot(dir, p) * ${k} - t * ${speed};
+    result += vec3(${amplitude} * sin(phase), ${amplitude} * ${k} * cos(phase) * dir);
+  }`
+  }).join('\n')}
   return result;
 }
 `
