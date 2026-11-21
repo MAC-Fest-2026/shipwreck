@@ -35,3 +35,12 @@ Choose a mode on the title screen, then select a callsign and open **Flight scho
 ## 3D models
 
 Put `.glb` files under `public/models/`. The loader in `src/render/renderer.ts` currently names `sar-helicopter.glb` and `rescue-vessel.glb`. Wire new files into the renderer to use them in the game. Other scene geometry is built in `src/render/models.ts`.
+
+## Project rules
+
+- Make visual and asset changes only. Never change gameplay logic, scoring, webcam gestures, or keyboard/mouse controls. If a visual change seems to require a gameplay change, stop and ask the user.
+- Do one task per message. List changed files and give test steps for both control modes.
+- Never modify or re-export `public/models/rescue-vessel.glb`.
+- Keep raw or large source models outside the repo in `C:\Projects\shipwreck-raw\`. Keep finished models under 10 MB each in `public/models/`. Never commit a file over 20 MB.
+- Use `MODEL_SCALES` in `src/render/models.ts` for all visual model scaling.
+- Never commit `.env` files, API keys, or the `shipwreck-raw` folder.
