@@ -9,7 +9,7 @@ import { roster } from '../sim/rescue'
 import { waveHeight } from '../sim/water'
 import { beam, environment, placeBeam } from './environment'
 import { claw, cockpit, dock, fitModelScale, hazard, helicopter, light, lighthouse, MODEL_SCALES, person, raft,
-  rescueVessel, shark, wreck, type ScaledModel } from './models'
+  rescueVessel, SharkModel, wreck, type ScaledModel } from './models'
 
 export type Quality = 'low' | 'medium' | 'high'
 export interface RenderSettings { quality: Quality; reduceMotion: boolean; flashes: boolean }
@@ -41,12 +41,14 @@ export class GameRenderer {
   private readonly people = roster.map((r, i) => person(r.skin, i))
   private readonly marker = ring(2.1, '#82f2d7')
   private readonly peopleMarkers = roster.map(() => ring(0.87, '#ffc078'))
-  private readonly sharks = Array.from({ length: 3 }, () => shark())
-  private readonly meg = shark()
+  private readonly sharks = Array.from({ length: 3 }, (_, i) => new SharkModel('regularShark', i / 3))
+  private readonly meg = new SharkModel('megalodon')
+  private readonly animatedAttacks = new WeakSet<object>()
+  private nextSharkBite = 0
   private readonly rescueBeam = beam(this.scene)
   private readonly island = lighthouse()
   private readonly lightBeam: ReturnType<typeof beam>
-  private readonly modelSizes: Record<ScaledModel, ReturnType<typeof fitModelScale>>
+  private readonly modelSizes: Partial<Record<ScaledModel, ReturnType<typeof fitModelScale>>>
   private readonly schoolBuoy = hazard('barrel', 1.15)
   private readonly cabin = cockpit()
   private readonly rescueGroup = new T.Group()
@@ -78,8 +80,6 @@ export class GameRenderer {
     const heloModel = helicopter()
     this.helo = { ...heloModel, root: new T.Group().add(heloModel.root) }
     this.modelSizes = {
-      regularShark: this.sharks.map(({ root }) => fitModelScale('regularShark', root))[0],
-      megalodon: fitModelScale('megalodon', this.meg.root),
       rescueVessel: fitModelScale('rescueVessel', this.rescueBoat),
       helicopter: fitModelScale('helicopter', heloModel.root),
       cruiseShip: fitModelScale('cruiseShip', this.ship),
@@ -139,6 +139,11 @@ export class GameRenderer {
     const decoders = new URL(base + 'decoders/', document.baseURI)
     const draco = new DRACOLoader().setDecoderPath(new URL('draco/', decoders).href)
     const loader = new GLTFLoader().setDRACOLoader(draco)
+    loader.register(parser => {
+      // Load embedded GLB images through img-src, which permits local blob URLs.
+      parser.textureLoader = new T.TextureLoader(parser.options.manager)
+      return { name: 'ShipwreckModelTextures' }
+    })
     const meshoptUrl = new URL('meshopt_decoder.module.js', decoders).href
     const meshopt: typeof import('three/addons/libs/meshopt_decoder.module.js') | null =
       await import(/* @vite-ignore */ meshoptUrl).catch((error: unknown) => {
@@ -148,7 +153,15 @@ export class GameRenderer {
     if (meshopt) loader.setMeshoptDecoder(meshopt.MeshoptDecoder)
 
     const path = base + 'models/'
+    const sharkAssets = [
+      { file: 'shark.glb', kind: 'regularShark', models: this.sharks },
+      { file: 'megalodon.glb', kind: 'megalodon', models: [this.meg] },
+    ] as const
     await Promise.allSettled([
+      ...sharkAssets.map(({ file, kind, models }) => loader.loadAsync(path + file).then(({ scene, animations }) => {
+        const sizes = models.map(model => model.setAsset(scene, animations))
+        this.modelSizes[kind] = sizes[0]
+      }).catch((error: unknown) => console.warn(`[models] Could not load ${file}.`, error))),
       loader.loadAsync(path + 'sar-helicopter.glb').then(({ scene }) => {
         const rotor = scene.getObjectByName('MainRotor')
         const tail = scene.getObjectByName('TailRotor')
@@ -171,7 +184,9 @@ export class GameRenderer {
     draco.dispose()
 
     for (const name of Object.keys(MODEL_SCALES) as ScaledModel[]) {
-      const { length, width, height, scale } = this.modelSizes[name]
+      const size = this.modelSizes[name]
+      if (!size) continue
+      const { length, width, height, scale } = size
       console.info(`[models] ${MODEL_SCALES[name].label} length=${length.toFixed(2)} width=${width.toFixed(2)} height=${height.toFixed(2)} scale=${scale.toFixed(4)}`)
     }
   }
@@ -230,6 +245,9 @@ export class GameRenderer {
     } else {
       desiredFov = this.drawBoat(run, t, arrival, settings.reduceMotion)
     }
+    const animationDt = run.paused || run.autoStop || run.record ? 0 : dt
+    if (isRescue) this.sharks.forEach(shark => shark.animate(animationDt))
+    this.meg.animate(animationDt)
     const weight = !this.initialized || newPhase && (firstPerson || arrival || run.phase === 'rescue') ? 1 : 1 - Math.exp(-dt * (firstPerson ? 8 : 3.6))
     this.camera.position.lerp(this.eye, weight)
     this.scratch.lerp(this.point, weight)
@@ -257,6 +275,9 @@ export class GameRenderer {
   private loadRun(run: Session) {
     this.lastRun = run
     this.initialized = false
+    this.nextSharkBite = 0
+    this.sharks.forEach(shark => shark.resetAnimation())
+    this.meg.resetAnimation()
     this.obstacles.clear()
     for (const obstacle of run.boat.hazards) {
       const model = hazard(obstacle.type, obstacle.radius)
@@ -283,7 +304,7 @@ export class GameRenderer {
       this.point.set(-38, 7.0, -7)
       this.meg.root.visible = run.elapsed > 7
       this.meg.root.position.set(-73 + run.elapsed * 2.4, -2.35, 14)
-      this.meg.root.rotation.set(0, Math.PI, -0.02)
+      this.meg.root.rotation.set(0, Math.PI / 2, -0.02, 'YXZ')
       const split = clamp(run.elapsed / 7)
       this.ship.children[0].rotation.z = lerp(-0.06, -0.25, split)
       this.ship.children[1].rotation.z = lerp(0.04, 0.33, split)
@@ -301,12 +322,14 @@ export class GameRenderer {
     if (!inIntro && (warning >= 0 && warning < 4 || breach >= 0 && breach < 4.75)) {
       this.meg.root.visible = true
       const breachAge = Math.max(0, breach)
-      const arc = breach < 0 ? -2.8 : -3 + 12 * Math.sin(clamp(breachAge / 4.75) * Math.PI)
+      const angle = clamp(breachAge / 4.75) * Math.PI
+      const arc = breach < 0 ? -2.8 : -3 + 12 * Math.sin(angle)
       this.meg.root.position.set(-39 + breachAge * 2.4, arc, -3 + breachAge * 0.16)
-      this.meg.root.rotation.set(0.34, -0.45, -0.63 + breachAge * 0.3)
+      const rise = breach < 0 ? 0 : 12 * Math.PI / 4.75 * Math.cos(angle)
+      this.meg.root.rotation.set(-Math.atan2(rise, Math.hypot(2.4, 0.16)), Math.atan2(2.4, 0.16), 0, 'YXZ')
+      if (breach >= 0 && !this.animatedAttacks.has(r) && this.meg.bite()) this.animatedAttacks.add(r)
       if (!reduced && breach >= 0 && breach < 0.9) this.eye.y += Math.sin(breach * 27) * 0.38
     }
-    this.meg.tail.rotation.y = Math.sin(t * 3.9) * 0.26
     this.ship.visible = !practice
     this.helo.root.visible = !inIntro
     this.helo.root.position.set(inArrival ? r.x - (8 - run.elapsed) ** 2 * 1.15 : r.x, r.altitude, 0)
@@ -370,16 +393,22 @@ export class GameRenderer {
       mark.material.color.copy(s.targeted ? danger : amber)
       mark.scale.setScalar(s.targeted ? 1.25 + Math.sin(t * 9) * 0.25 : 1)
     })
-    this.sharks.forEach(({ root, tail }, i) => {
+    this.sharks.forEach((shark, i) => {
+      const { root } = shark
       root.visible = !practice
       const angle = t * 0.28 + i * Math.PI * 2 / 3
       const attack = r.attacks[i]
       const dx = i * 4 + 16
       const targetX = attack ? attack.target.x : -32 + Math.cos(angle) * dx
-      const z = attack ? lerp(15 * (i % 2 === 0 ? 1 : -1), 0.8, clamp((t - attack.start) / (attack.end - attack.start))) : Math.sin(angle) * dx * 0.42
+      const chargeStart = 15 * (i % 2 === 0 ? 1 : -1)
+      const z = attack ? lerp(chargeStart, 0.8, clamp((t - attack.start) / (attack.end - attack.start))) : Math.sin(angle) * dx * 0.42
       root.position.set(targetX, waveHeight(targetX, z, t) - (attack ? 0.25 : 0.58), z)
-      root.rotation.y = attack ? Math.PI / 2 * (i % 2 === 0 ? -1 : 1) : angle + Math.PI / 2
-      tail.rotation.y = Math.sin(t * 5.3 + i) * 0.31
+      root.rotation.y = attack ? (chargeStart > 0 ? Math.PI : 0) : Math.atan2(-Math.sin(angle), 0.42 * Math.cos(angle))
+      if (attack?.announced && attack.target.state === 'floating' && !this.animatedAttacks.has(attack)
+        && shark.bite(this.nextSharkBite)) {
+        this.animatedAttacks.add(attack)
+        this.nextSharkBite++
+      }
     })
     return fov
   }
@@ -422,11 +451,15 @@ export class GameRenderer {
     if (active) {
       const age = t - active.time
       this.meg.root.visible = true
-      const arc = age < 2.4 ? -3.7 : -4.8 + 9.1 * Math.sin(clamp((age - 2.4) / 2.6) * Math.PI)
+      const leaping = age >= 2.4
+      const angle = clamp((age - 2.4) / 2.6) * Math.PI
+      const arc = leaping ? -4.8 + 9.1 * Math.sin(angle) : -3.7
       const side = active.z < 600 ? -1 : 1
       this.meg.root.position.set(active.x + (3.2 - age) * 6 * side, arc, -Math.max(active.z, b.z + 12))
-      this.meg.root.rotation.set(0, side === -1 ? Math.PI : 0, side * 0.51)
-      this.meg.tail.rotation.y = Math.sin(t * 6) * 0.35
+      const rise = leaping ? 9.1 * Math.PI / 2.6 * Math.cos(angle) : 0
+      const drift = b.z + 12 > active.z ? -b.speed * Math.cos(b.heading) : 0
+      this.meg.root.rotation.set(-Math.atan2(rise, Math.hypot(6, drift)), Math.atan2(-6 * side, drift), 0, 'YXZ')
+      if (leaping && !this.animatedAttacks.has(active) && this.meg.bite()) this.animatedAttacks.add(active)
     }
     const bearing = Math.sin(t * 0.91) * 110
     const target = new T.Vector3(bearing, 24.7, 116)

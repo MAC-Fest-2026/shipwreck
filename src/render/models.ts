@@ -1,5 +1,6 @@
 import * as T from 'three'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
+import { clone as cloneSkeleton } from 'three/addons/utils/SkeletonUtils.js'
 import { seededRandom } from '../core/math'
 
 // Visual lengths in scene units. Survivors, the wooden board, and the rescue deck are fixed references.
@@ -271,25 +272,77 @@ export function person(skin: string, variation: number) {
   return { root, arms }
 }
 
-export function shark() {
-  const root = new T.Group()
-  const sharkSkin = metal('#273d44', 0.4)
-  const belly = metal('#829c9c', 0.6)
-  oval(root, sharkSkin, 0, 0, 0, 2.23, 0.47, 0.53)
-  oval(root, belly, -0.32, -0.22, 0, 1.49, 0.265, 0.46)
-  oval(root, sharkSkin, -1.74, 0, 0, 0.78, 0.29, 0.41)
-  mesh(root, extrude([[-0.61, 0], [0.57, 0], [0.65, 1.09], [0.27, 0.95]], 0.057), sharkSkin, 0, 0.29, -0.03)
-  const tail = new T.Group()
-  tail.position.x = 1.8
-  root.add(tail)
-  mesh(tail, extrude([[0, 0], [0.72, 0.99], [0.66, 0.07], [0.57, -0.70]], 0.04), sharkSkin, 0, 0, -0.02)
-  for (const side of [-1, 1]) {
-    oval(root, seal, -1.65, 0.102, side * 0.38, 0.078, 0.057, 0.04)
-    const fin = mesh(root, extrude([[0, 0], [1.15, 0], [1.45, 1.02]], 0.055), sharkSkin, -0.4, -0.19, 0)
-    fin.rotation.x = side * Math.PI / 2
+const sharkClips = {
+  regularShark: ['Action_Swimming', 'Action_Bite_1', 'Action_Bite_2', 'Action_Bite_3'],
+  megalodon: ['Megalodon_skeleton|megalodon_swim_forward', 'Megalodon_skeleton|megalodon_attack_bite'],
+} as const
+const biteFade = 0.12
+
+interface SharkAnimation {
+  mixer: T.AnimationMixer
+  swim: T.AnimationAction
+  bites: T.AnimationAction[]
+  activeBite: T.AnimationAction | null
+}
+
+export class SharkModel {
+  readonly root = new T.Group()
+  private animation?: SharkAnimation
+
+  constructor(private readonly kind: keyof typeof sharkClips, private readonly swimPhase = 0) {}
+
+  setAsset(scene: T.Object3D, clips: T.AnimationClip[]) {
+    const [swimClip, ...biteClips] = sharkClips[this.kind].map(name => {
+      const clip = T.AnimationClip.findByName(clips, name)
+      if (!clip) throw new Error(`Missing animation "${name}".`)
+      return clip
+    })
+    // Both GLBs face +Z. The outer group owns the game path and heading.
+    const model = cloneSkeleton(scene)
+    model.updateMatrixWorld(true)
+    const size = fitModelScale(this.kind, model)
+    const mixer = new T.AnimationMixer(model)
+    const swim = mixer.clipAction(swimClip).setLoop(T.LoopRepeat, Infinity)
+    const bites = biteClips.map(clip => {
+      const action = mixer.clipAction(clip).setLoop(T.LoopOnce, 1)
+      action.clampWhenFinished = true
+      return action
+    })
+    const animation: SharkAnimation = { mixer, swim, bites, activeBite: null }
+    this.animation = animation
+    mixer.addEventListener('finished', ({ action }) => {
+      if (action !== animation.activeBite) return
+      action.crossFadeTo(swim.reset().play(), biteFade, false)
+      animation.activeBite = null
+    })
+    this.root.add(model)
+    this.resetAnimation()
+    return size
   }
-  mergeStaticMeshes(root)
-  return { root, tail }
+
+  resetAnimation() {
+    const animation = this.animation
+    if (!animation) return
+    animation.mixer.stopAllAction()
+    animation.activeBite = null
+    animation.swim.reset().play().time = animation.swim.getClip().duration * this.swimPhase
+    animation.mixer.update(0)
+  }
+
+  bite(variant = 0) {
+    const animation = this.animation
+    if (!animation) return false
+    const next = animation.bites[variant % animation.bites.length]
+    const previous = animation.activeBite ?? animation.swim
+    next.reset().play()
+    if (previous !== next) previous.crossFadeTo(next, biteFade, false)
+    animation.activeBite = next
+    return true
+  }
+
+  animate(dt: number) {
+    if (this.root.visible) this.animation?.mixer.update(dt)
+  }
 }
 
 export function wreck() {
