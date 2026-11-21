@@ -8,15 +8,18 @@ const R = tuning.rescue
 const S = tuning.shark
 
 export const roster = [
-  { id: 'mara', name: 'Mara Voss', x: -35.4, z: 0, raft: true, skin: '#c59374' },
-  { id: 'elias', name: 'Elias Rook', x: -34, z: -0.6, raft: true, skin: '#d3ae94' },
-  { id: 'dev', name: 'Dev Kapoor', x: -30.8, z: 0.4, raft: true, skin: '#ac7b5b' },
-  { id: 'ana', name: 'Ana Kapoor', x: -29.5, z: -0.35, raft: true, skin: '#be8d69' },
-  { id: 'priya', name: 'Priya Nair', x: -28.2, z: 0.15, raft: true, skin: '#956848' },
-  { id: 'jay', name: 'Jay Okafor', x: -58, z: 0, raft: false, skin: '#79563e' },
-  { id: 'tommy', name: 'Tommy Ricci', x: -41, z: 0, raft: false, skin: '#dbad91' },
-  { id: 'hollis', name: 'Hollis Brandt', x: -8, z: 0, raft: false, skin: '#bc9172' },
+  { id: 'mara', name: 'Mara Voss', x: -35.4, z: 0, skin: '#c59374' },
+  { id: 'elias', name: 'Elias Rook', x: -34, z: -0.6, skin: '#d3ae94' },
+  { id: 'dev', name: 'Dev Kapoor', x: -30.8, z: 0.4, skin: '#ac7b5b' },
+  { id: 'ana', name: 'Ana Kapoor', x: -29.5, z: -0.35, skin: '#be8d69' },
+  { id: 'priya', name: 'Priya Nair', x: -28.2, z: 0.15, skin: '#956848' },
+  { id: 'jay', name: 'Jay Okafor', x: -27.65, z: 1.05, skin: '#79563e' },
+  { id: 'tommy', name: 'Tommy Ricci', x: -31.2, z: -1.15, skin: '#dbad91' },
+  { id: 'hollis', name: 'Hollis Brandt', x: -29.25, z: 1.1, skin: '#bc9172' },
 ] as const
+export const maxSurvivors = roster.length
+export const normalizeSurvivorCount = (value: unknown) =>
+  typeof value === 'number' && Number.isFinite(value) ? clamp(Math.round(value), 1, maxSurvivors) : maxSurvivors
 
 export type SurvivorState = 'debris' | 'floating' | 'carried' | 'falling' | 'saved' | 'lost'
 export interface Survivor {
@@ -56,12 +59,12 @@ export class Rescue {
   done: 'aboard' | 'all-lost' | null = null
   readonly random: () => number
 
-  constructor(seed: number, private readonly emit: Emit, readonly practice = false) {
+  constructor(seed: number, private readonly emit: Emit, readonly practice = false, count: number = maxSurvivors) {
     this.random = seededRandom(seed)
     this.survivors = practice
       ? [{ id: 'buoy', name: 'Training buoy', skin: '#f2914f', x: 0, z: 0, state: 'floating', targeted: false,
           lastTarget: -Infinity, fallY: 0, fallSpeed: 0 }]
-      : roster.map(entry => ({ ...entry, state: entry.raft ? 'debris' : 'floating',
+      : roster.slice(0, normalizeSurvivorCount(count)).map(entry => ({ ...entry, state: 'debris',
           targeted: false, lastTarget: -Infinity, fallY: 0, fallSpeed: 0 }))
   }
 

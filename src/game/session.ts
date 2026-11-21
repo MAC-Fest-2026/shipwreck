@@ -1,7 +1,7 @@
 import { tuning } from '../app/tuning'
 import { neutralIntent, type ControlIntent } from '../input/intent'
 import { Boat } from '../sim/boat'
-import { Rescue } from '../sim/rescue'
+import { maxSurvivors, normalizeSurvivorCount, Rescue } from '../sim/rescue'
 import type { Emit, GameEvent } from './events'
 import { rankFor, scoreRun, type InputMode, type Outcome, type RunRecord } from './score'
 
@@ -33,6 +33,7 @@ export class Session {
   desired = neutralIntent
   private cuePlayed = false
   private slowUntil = -Infinity
+  private readonly survivorCount: number
 
   constructor(
     readonly seed: number,
@@ -41,10 +42,12 @@ export class Session {
     options: SessionOptions,
     school: boolean,
     private readonly eventListener: (e: GameEvent) => void,
+    survivorCount: number = maxSurvivors,
   ) {
     this.assist = { ...options }
+    this.survivorCount = normalizeSurvivorCount(survivorCount)
     this.phase = school ? 'school' : 'intro'
-    this.rescue = new Rescue(seed, school ? () => {} : this.emit, school)
+    this.rescue = new Rescue(seed, school ? () => {} : this.emit, school, this.survivorCount)
     this.boat = new Boat(seed, this.emit)
   }
 
@@ -92,7 +95,7 @@ export class Session {
 
   skip() {
     if (this.phase === 'school') {
-      this.rescue = new Rescue(this.seed, this.emit)
+      this.rescue = new Rescue(this.seed, this.emit, false, this.survivorCount)
       this.enter('intro')
     } else if (isCinematic(this.phase)) {
       const next = timelines[this.phase].next
@@ -126,7 +129,8 @@ export class Session {
       runId: this.id, player: { id: this.callsign.toLowerCase(), callsign: this.callsign },
       startedAt: this.startedAt, outcome, score, rank: rankFor(score),
       time: { rescueMs, boatMs, totalActiveMs: rescueMs + boatMs },
-      survivors: { total: 8, saved: rescue.practice ? 0 : rescue.saved, lost: rescue.practice ? 0 : rescue.lost,
+      survivors: { total: rescue.practice ? this.survivorCount : rescue.survivors.length,
+        saved: rescue.practice ? 0 : rescue.saved, lost: rescue.practice ? 0 : rescue.lost,
         perSurvivor: rescue.practice ? {} : Object.fromEntries(rescue.survivors.map(s => [s.id, s.state])) },
       stats: { grabAttempts: rescue.grabAttempts, grabSuccesses: rescue.grabSuccesses, quickSaves: rescue.quickSaves,
         hardDrops: rescue.hardDrops, hullRemaining: boat.hull, collisions: boat.collisions },

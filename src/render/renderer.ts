@@ -19,6 +19,7 @@ const amber = new T.Color('#ffc078')
 const cyan = new T.Color('#73e6d5')
 const danger = new T.Color('#ff664c')
 const { smoothstep } = T.MathUtils
+const bootClearance = 0.02
 
 // The top of the breach passes over the board at age zero.
 function boardBreachHeight(age: number) {
@@ -52,6 +53,9 @@ export class GameRenderer {
   private readonly raft = raft()
   private readonly ship = wreck()
   private readonly rescueBoat = rescueVessel()
+  private readonly deckPassengers = new T.Group()
+  private readonly deckSlots = roster.map((_, i) =>
+    new T.Vector3((i % 4) * 1.07 - 1.8, 1.585 + bootClearance, 0.3 - Math.floor(i / 4) * 1.4))
   private readonly people = roster.map((r, i) => person(r.skin, i))
   private readonly marker = ring(2.1, '#82f2d7')
   private readonly peopleMarkers = roster.map(() => ring(0.87, '#ffc078'))
@@ -100,6 +104,7 @@ export class GameRenderer {
       island: fitModelScale('island', this.island),
       rocks: fitModelScale('rocks', hazard('reef', MODEL_SCALES.rocks.referenceRadius)),
     }
+    this.rescueBoat.add(this.deckPassengers)
     this.island.position.set(31, 0, -950)
     this.lightBeam = beam(this.island, '#ffbf65')
 
@@ -190,8 +195,19 @@ export class GameRenderer {
         // The GLB's recovery deck is aft of its origin. Align it to the existing drop zone at full scale.
         const [deckX, deckY, deckZ] = MODEL_SCALES.rescueVessel.deckAnchor
         scene.position.add(new T.Vector3(-deckX, R.deckY - deckY, -deckZ))
+        const deck = scene.getObjectByName('Cambered_nonskid_main_deck')
+        // Sample the camber in boat-local coordinates before attaching the visual to the moving boat.
+        scene.updateMatrixWorld(true)
+        const down = new T.Vector3(0, -1, 0)
+        const ray = new T.Raycaster()
+        const origin = new T.Vector3()
+        for (const slot of this.deckSlots) {
+          ray.set(origin.set(slot.x, R.deckY + 1, slot.z), down)
+          const surface = deck ? ray.intersectObject(deck)[0]?.point.y : undefined
+          slot.y = (surface ?? R.deckY) + bootClearance
+        }
         const deckMarks = this.rescueBoat.getObjectByName('RescueDeckMarks')
-        this.rescueBoat.clear().add(scene)
+        this.rescueBoat.clear().add(scene, this.deckPassengers)
         if (deckMarks) this.rescueBoat.add(deckMarks)
       }),
     ])
@@ -402,16 +418,19 @@ export class GameRenderer {
       const i = carriers.indexOf(s)
       const floating = s.state === 'floating'
       const saved = s.state === 'saved'
-      const x = i >= 0 ? r.clawX + (i - 0.5) * 0.59 : saved ? R.deploy + (index % 4) * 1.07 - 1.8 : s.x
-      const z = i >= 0 ? 0.1 : saved ? 0.3 - Math.floor(index / 4) * 1.4 : s.z
-      const y = i >= 0 ? r.clawY - 2.2 : r.survivorY(s) - 1.22
-      root.position.set(x, y, z)
+      const parent = saved ? this.deckPassengers : this.rescueGroup
+      if (root.parent !== parent) parent.add(root)
+      if (saved) root.position.copy(this.deckSlots[index])
+      else root.position.set(i >= 0 ? r.clawX + (i - 0.5) * 0.59 : s.x,
+        i >= 0 ? r.clawY - 2.2 : r.survivorY(s) - 1.22, i >= 0 ? 0.1 : s.z)
       root.rotation.z = Math.sin(t * 3.7 + index) * (floating ? 0.23 : 0.074)
       root.rotation.y = Math.sin(index * 15.13) * 0.52
       arms[0].rotation.z = 0.55 + Math.sin(t * 2.75 + index) * 0.3
       arms[1].rotation.z = 0.42 + Math.sin(t * 4.0 + index) * (saved ? 0.12 : 1.7)
       if (i >= 0) { arms[0].rotation.z = -2.4; arms[1].rotation.z = 2.4 }
-      mark.position.set(x, waveHeight(x, z, t) + 0.12 + (s.state === 'debris' ? 0.56 : 0), z)
+      if (mark.visible) {
+        mark.position.set(s.x, waveHeight(s.x, s.z, t) + 0.12 + (s.state === 'debris' ? 0.56 : 0), s.z)
+      }
       mark.material.color.copy(s.targeted ? danger : amber)
       mark.scale.setScalar(s.targeted ? 1.25 + Math.sin(t * 9) * 0.25 : 1)
     })
@@ -451,9 +470,13 @@ export class GameRenderer {
       visible.forEach(item => { item.visible = item === this.rescueBoat || item === this.helo.root || this.people.some(p => p.root === item) })
       this.helo.root.position.set(12 - path * 37, 18 + path * 2, -931)
       this.helo.rotor.rotation.y = t * 29
+      let disembarking = 0
       this.people.forEach(({ root, arms }, i) => {
-        root.visible = i < run.rescue.saved
-        root.position.set(9 + (i % 2) * 2.15, 1.49, -904 - (i * 1.65 + path * 4.7))
+        root.visible = run.rescue.survivors[i]?.state === 'saved'
+        if (!root.visible) return
+        if (root.parent !== this.rescueGroup) this.rescueGroup.add(root)
+        const slot = disembarking++
+        root.position.set(9 + (slot % 2) * 2.15, 1.49, -904 - (slot * 1.65 + path * 4.7))
         root.rotation.set(0, Math.PI, 0)
         arms[0].rotation.z = Math.sin(t * 6 + i) * 0.48
         arms[1].rotation.z = -arms[0].rotation.z

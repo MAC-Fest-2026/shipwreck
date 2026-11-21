@@ -6,6 +6,7 @@ import type { Settings } from '../app/settings'
 import { clamp, clockLabel } from '../core/math'
 import { instructions } from '../input/calibration'
 import { courseLabel } from '../sim/boat'
+import { maxSurvivors } from '../sim/rescue'
 import { isCinematic } from '../game/session'
 import { downloadRuns } from '../persistence/scores'
 import type { RunRecord } from '../game/score'
@@ -214,6 +215,13 @@ function UserSettings({ c }: { c: Controller }) {
           c.settings.quality === 'low' ? 'medium' : c.settings.quality === 'medium' ? 'high' : 'low')}>{c.settings.quality} ↻</Button></div>
         <div class="setting-row"><span>Cable stabilization</span><Button action={() => c.changeSetting('stabilization', c.settings.stabilization ? 0 : 0.35)}>
           {c.settings.stabilization ? '35%' : 'Off'}</Button></div>
+        <div class="setting-row"><span>Survivor Count <small>· next mission</small></span><div class="stepper" role="group" aria-label="Survivor Count">
+          <Button variant="letter-button" label="Decrease survivor count" disabled={c.settings.survivorCount <= 1}
+            action={() => c.changeSetting('survivorCount', Math.max(1, c.settings.survivorCount - 1))}>−</Button>
+          <strong aria-live="polite">{c.settings.survivorCount}</strong>
+          <Button variant="letter-button" label="Increase survivor count" disabled={c.settings.survivorCount >= maxSurvivors}
+            action={() => c.changeSetting('survivorCount', Math.min(maxSurvivors, c.settings.survivorCount + 1))}>+</Button>
+        </div></div>
       </div>
       <div class="settings-block"><h3>Display &amp; controls</h3><div class="switches">
         {switches.map(([key, label]) => <Button key={key} variant={c.settings[key] ? 'switch on' : 'switch'}
@@ -243,7 +251,7 @@ function Leaderboard({ c }: { c: Controller }) {
       <thead><tr><th>#</th><th>Callsign</th><th>Rank</th><th>Saved</th><th>Time</th><th>Score</th></tr></thead>
       <tbody>{list.slice(0, 10).map((r, i) => <tr key={r.runId} class={r.runId === c.recent?.runId ? 'latest' : ''}>
         <td>{String(i + 1).padStart(2, '0')}</td><th scope="row">{r.player.callsign}</th><td>{r.rank}</td>
-        <td>{r.survivors.saved}/8</td><td>{time(r.time.totalActiveMs)}</td><td>{number(r.score)}</td>
+        <td>{r.survivors.saved}/{r.survivors.total}</td><td>{time(r.time.totalActiveMs)}</td><td>{number(r.score)}</td>
       </tr>)}</tbody>
     </table> : <div class="empty-records"><span aria-hidden="true">◎</span><h3>No runs yet</h3><p>Scores and active times from this device will appear here.</p></div>}
     {c.status && <p role="status" class="status">{c.status}</p>}
@@ -359,7 +367,7 @@ function BoatHud({ c }: { c: Controller }) {
 
 const cineWords = {
   intro: ['THE WRECK', 'A distress call cuts through the storm.'],
-  arrival: ['SEARCH & RESCUE', 'The searchlight finds eight survivors.'],
+  arrival: ['SEARCH & RESCUE', 'The searchlight finds survivors on the wreckage.'],
   handoff: ['ALL ABOARD', 'Take the helm and follow the lighthouse.'],
   outro: ['LANDFALL', 'The first light breaks over the harbor.'],
 }
@@ -374,7 +382,7 @@ function Results({ c, record }: { c: Controller; record: RunRecord }) {
       <div><span class="mono">FINAL SCORE</span><strong>{number(record.score)}</strong></div>
     </div>
     <div class="result-stats">
-      <div><span class="mono">SAVED</span><strong>{record.survivors.saved}/8</strong></div>
+      <div><span class="mono">SAVED</span><strong>{record.survivors.saved}/{record.survivors.total}</strong></div>
       <div><span class="mono">LOST</span><strong>{record.survivors.lost}</strong></div>
       <div><span class="mono">ACTIVE TIME</span><strong>{time(record.time.totalActiveMs)}</strong></div>
       <div><span class="mono">HULL</span><strong>{record.stats.hullRemaining}%</strong></div>

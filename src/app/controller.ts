@@ -308,7 +308,8 @@ export class Controller {
       this.recent = null
       this.toast = null
       this.mode = mode
-      this.game = new Session(tuning.seed, this.callsign, mode, this.settings, school, event => this.event(event))
+      this.game = new Session(tuning.seed, this.callsign, mode, this.settings, school,
+        event => this.event(event), this.settings.survivorCount)
       this.replayFast = fast
       this.replay = mode === 'replay' ? new ReplayIntentProvider(() => pilotBot(this.game!)) : null
       this.status = ''
@@ -379,7 +380,7 @@ export class Controller {
   changeSetting<K extends keyof Settings>(key: K, value: Settings[K]) {
     this.settings = { ...this.settings, [key]: value }
     this.radio.configure(this.settings)
-    if (this.game) this.game.assist = { ...this.game.assist, [key]: value }
+    if (this.game && key !== 'survivorCount') this.game.assist = { ...this.game.assist, [key]: value }
     put('shipwreck-settings-v1', this.settings)
     this.dirty = true
   }
