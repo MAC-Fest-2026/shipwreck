@@ -5,6 +5,7 @@ import { BloomEffect, EffectComposer, EffectPass, RenderPass, VignetteEffect } f
 import { tuning } from '../app/tuning'
 import { clamp, damp, lerp, seededRandom } from '../core/math'
 import type { Session } from '../game/session'
+import { boatLungePosition, boatLungeTiming } from '../sim/boat'
 import { roster } from '../sim/rescue'
 import { waveHeight } from '../sim/water'
 import { beam, environment, placeBeam } from './environment'
@@ -17,6 +18,19 @@ const R = tuning.rescue
 const amber = new T.Color('#ffc078')
 const cyan = new T.Color('#73e6d5')
 const danger = new T.Color('#ff664c')
+const { smoothstep } = T.MathUtils
+
+// The top of the breach passes over the board at age zero.
+function boardBreachHeight(age: number) {
+  return -1.5 - 6.1 * smoothstep(age, -2.2, -1.25)
+    + 14.5 * smoothstep(age, -1.25, 0) - 14.9 * smoothstep(age, 0, 2.25)
+}
+
+function boatLungeHeight(age: number) {
+  const { bite, strike, clear, end } = boatLungeTiming
+  return -1.05 + 1.4 * (smoothstep(age, bite, strike) - smoothstep(age, strike, clear))
+    - 7.2 * smoothstep(age, clear, end)
+}
 
 function ring(radius: number, color: string) {
   const meshRing = new T.Mesh(new T.RingGeometry(radius * 0.89, radius, 42), light(color))
@@ -239,6 +253,7 @@ export class GameRenderer {
     this.env.uniforms.fog.value = fog * 0.73
     this.env.uniforms.search.value = this.rescueBeam.mesh.visible ? 0.7 : 0
     this.meg.root.visible = false
+    this.meg.swimSpeed = 1
     let desiredFov = 44
     if (isRescue) {
       desiredFov = this.drawRescue(run, t, departure, settings.reduceMotion)
@@ -269,7 +284,11 @@ export class GameRenderer {
     if (this.rain.visible) this.drawRain(t, settings.reduceMotion)
     this.initialized = true
     if (this.quality === 'high') this.composer.render(dt)
-    else this.renderer.render(this.scene, this.camera)
+    else {
+      // EffectComposer disables automatic clearing on the shared renderer.
+      this.renderer.clear()
+      this.renderer.render(this.scene, this.camera)
+    }
   }
 
   private loadRun(run: Session) {
@@ -319,15 +338,18 @@ export class GameRenderer {
     }
     const breach = t - r.breachedAt
     const warning = t - r.warningTime
-    if (!inIntro && (warning >= 0 && warning < 4 || breach >= 0 && breach < 4.75)) {
+    if (!inIntro && warning >= 0 && (breach >= 0 ? breach < 2.5 : warning < tuning.shark.warning)) {
+      const age = breach >= 0 ? breach : warning - tuning.shark.warning
+      const vx = -14
+      const vz = 2.2
+      const x = this.raft.root.position.x + vx * age
+      const z = this.raft.root.position.z + vz * age
+      const rise = (boardBreachHeight(age + 0.01) - boardBreachHeight(age - 0.01)) / 0.02
       this.meg.root.visible = true
-      const breachAge = Math.max(0, breach)
-      const angle = clamp(breachAge / 4.75) * Math.PI
-      const arc = breach < 0 ? -2.8 : -3 + 12 * Math.sin(angle)
-      this.meg.root.position.set(-39 + breachAge * 2.4, arc, -3 + breachAge * 0.16)
-      const rise = breach < 0 ? 0 : 12 * Math.PI / 4.75 * Math.cos(angle)
-      this.meg.root.rotation.set(-Math.atan2(rise, Math.hypot(2.4, 0.16)), Math.atan2(2.4, 0.16), 0, 'YXZ')
-      if (breach >= 0 && !this.animatedAttacks.has(r) && this.meg.bite()) this.animatedAttacks.add(r)
+      this.meg.root.position.set(x, waveHeight(x, z, t) + boardBreachHeight(age), z)
+      this.meg.root.rotation.set(-Math.atan2(rise, Math.hypot(vx, vz)), Math.atan2(vx, vz), 0, 'YXZ')
+      this.meg.swimSpeed = lerp(1.4, 2.1, smoothstep(age, -2.2, -1.25))
+      if (breach >= 0 && !this.animatedAttacks.has(r) && this.meg.bite(0, 1.85)) this.animatedAttacks.add(r)
       if (!reduced && breach >= 0 && breach < 0.9) this.eye.y += Math.sin(breach * 27) * 0.38
     }
     this.ship.visible = !practice
@@ -396,8 +418,11 @@ export class GameRenderer {
     this.sharks.forEach((shark, i) => {
       const { root } = shark
       root.visible = !practice
-      const angle = t * 0.28 + i * Math.PI * 2 / 3
+      const patrol = t * 0.52 + i * Math.PI * 2 / 3
+      // Cover the tight ends of the oval faster to even out the patrol's speed.
+      const angle = patrol + 0.2 * Math.sin(2 * patrol)
       const attack = r.attacks[i]
+      shark.swimSpeed = attack ? 2.7 : 2
       const dx = i * 4 + 16
       const targetX = attack ? attack.target.x : -32 + Math.cos(angle) * dx
       const chargeStart = 15 * (i % 2 === 0 ? 1 : -1)
@@ -405,7 +430,7 @@ export class GameRenderer {
       root.position.set(targetX, waveHeight(targetX, z, t) - (attack ? 0.25 : 0.58), z)
       root.rotation.y = attack ? (chargeStart > 0 ? Math.PI : 0) : Math.atan2(-Math.sin(angle), 0.42 * Math.cos(angle))
       if (attack?.announced && attack.target.state === 'floating' && !this.animatedAttacks.has(attack)
-        && shark.bite(this.nextSharkBite)) {
+        && shark.bite(this.nextSharkBite, 2.7)) {
         this.animatedAttacks.add(attack)
         this.nextSharkBite++
       }
@@ -447,19 +472,22 @@ export class GameRenderer {
       model.visible = h.z < b.z + 230 && h.z > b.z - 15
       if (model.visible && h.type !== 'reef') model.position.y = waveHeight(h.x, -h.z, t)
     })
-    const active = b.lunges.find(l => l.time >= 0 && t - l.time < 5.0)
+    const active = b.lunges.find(l => l.time >= 0 && t - l.time < boatLungeTiming.end)
     if (active) {
       const age = t - active.time
+      const snout = boatLungePosition(active, age)
+      const speed = Math.hypot(active.vx, active.vz)
+      // The model's origin is behind the snout. Align its head with the collision path.
+      const snoutOffset = MODEL_SCALES.megalodon.targetLength * 0.44
+      const x = snout.x - active.vx / speed * snoutOffset
+      const z = -snout.z + active.vz / speed * snoutOffset
+      const rise = (boatLungeHeight(age + 0.01) - boatLungeHeight(age - 0.01)) / 0.02
       this.meg.root.visible = true
-      const leaping = age >= 2.4
-      const angle = clamp((age - 2.4) / 2.6) * Math.PI
-      const arc = leaping ? -4.8 + 9.1 * Math.sin(angle) : -3.7
-      const side = active.z < 600 ? -1 : 1
-      this.meg.root.position.set(active.x + (3.2 - age) * 6 * side, arc, -Math.max(active.z, b.z + 12))
-      const rise = leaping ? 9.1 * Math.PI / 2.6 * Math.cos(angle) : 0
-      const drift = b.z + 12 > active.z ? -b.speed * Math.cos(b.heading) : 0
-      this.meg.root.rotation.set(-Math.atan2(rise, Math.hypot(6, drift)), Math.atan2(-6 * side, drift), 0, 'YXZ')
-      if (leaping && !this.animatedAttacks.has(active) && this.meg.bite()) this.animatedAttacks.add(active)
+      this.meg.root.position.set(x, waveHeight(x, z, t) + boatLungeHeight(age), z)
+      this.meg.root.rotation.set(-Math.atan2(rise, speed), Math.atan2(active.vx, -active.vz), 0, 'YXZ')
+      this.meg.swimSpeed = lerp(1.5, 2, smoothstep(age, 1, boatLungeTiming.bite))
+      if (age >= boatLungeTiming.bite && age <= boatLungeTiming.clear
+        && !this.animatedAttacks.has(active) && this.meg.bite(0, 1.75)) this.animatedAttacks.add(active)
     }
     const bearing = Math.sin(t * 0.91) * 110
     const target = new T.Vector3(bearing, 24.7, 116)

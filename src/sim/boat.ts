@@ -7,12 +7,28 @@ const T = tuning.boat
 export interface Hazard {
   x: number; z: number; radius: number; type: 'reef' | 'debris' | 'barrel'; hit: boolean
 }
+interface BoatLunge {
+  courseZ: number; side: -1 | 1; time: number; ended: boolean
+  x: number; targetZ: number; vx: number; vz: number
+}
+
+export const boatLungeTiming = { bite: 2.55, strike: 3.1, clear: 3.65, end: 5 } as const
+
+// Both damage and rendering use this path for the tip of the shark's snout.
+export function boatLungePosition(lunge: BoatLunge, age: number) {
+  const travel = age - boatLungeTiming.strike
+  return { x: lunge.x + travel * lunge.vx, z: lunge.targetZ + travel * lunge.vz }
+}
+
 export const courseLabel = (d: number) =>
   d < 150 ? 'Open water' : d < 350 ? 'Debris field' : d < 600 ? 'Fog & reef' : d < 780 ? 'Rogue swell' : 'Island approach'
 
 export class Boat {
   readonly hazards: Hazard[] = []
-  readonly lunges = [{ z: 455, x: 0, time: -1, ended: false }, { z: 689, x: 0, time: -1, ended: false }]
+  readonly lunges: BoatLunge[] = [
+    { courseZ: 455, side: -1, time: -1, ended: false, x: 0, targetZ: 0, vx: 0, vz: 0 },
+    { courseZ: 689, side: 1, time: -1, ended: false, x: 0, targetZ: 0, vx: 0, vz: 0 },
+  ]
   x = 0
   z = 0
   heading = 0
@@ -76,16 +92,29 @@ export class Boat {
 
     for (const lunge of this.lunges) {
       if (lunge.ended) continue
-      if (lunge.time < 0 && this.z >= lunge.z - 44) {
+      if (lunge.time < 0) {
+        if (this.z < lunge.courseZ - 44) continue
+        // Lead the current heading once at the warning. Turning changes the boat's path only.
+        const forwardX = Math.sin(this.heading)
+        const forwardZ = Math.cos(this.heading)
+        const lead = this.speed * boatLungeTiming.strike
+        const flank = lunge.side * 22
         lunge.time = this.time
-        lunge.x = this.x
-        this.emit('LUNGE_WARNING', { x: lunge.x, text: 'MEGALODON · TURN AWAY FROM THE WAKE' })
+        lunge.x = this.x + forwardX * lead
+        lunge.targetZ = this.z + forwardZ * lead
+        lunge.vx = -(forwardZ * flank + forwardX * 14) / boatLungeTiming.strike
+        lunge.vz = -(-forwardX * flank + forwardZ * 14) / boatLungeTiming.strike
+        const text = lunge.side < 0 ? 'MEGALODON ON LEFT · STEER RIGHT' : 'MEGALODON ON RIGHT · STEER LEFT'
+        this.emit('LUNGE_WARNING', { x: flank, text })
       }
-      if (lunge.time >= 0 && this.time - lunge.time >= 3.1) {
-        lunge.ended = true
-        this.emit('LUNGE', { x: lunge.x })
-        if (Math.abs(this.x - lunge.x) < 5 && Math.abs(this.z - lunge.z) < 21) this.damage(35, lunge.x)
-      }
+      const age = this.time - lunge.time
+      if (age < boatLungeTiming.bite) continue
+      const snout = boatLungePosition(lunge, age)
+      const contact = age <= boatLungeTiming.clear && Math.hypot(snout.x - this.x, snout.z - this.z) < 4.5
+      if (!contact && age < boatLungeTiming.clear) continue
+      lunge.ended = true
+      this.emit('LUNGE', { x: snout.x })
+      if (contact) this.damage(35, snout.x)
     }
     if (!this.sighted && this.z >= 740) {
       this.sighted = true

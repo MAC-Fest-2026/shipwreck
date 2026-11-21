@@ -6,7 +6,7 @@ import { seededRandom } from '../core/math'
 // Visual lengths in scene units. Survivors, the wooden board, and the rescue deck are fixed references.
 export const MODEL_SCALES = {
   regularShark: { label: 'Regular shark', targetLength: 6.2 },
-  megalodon: { label: 'Megalodon', targetLength: 18.6 },
+  megalodon: { label: 'Megalodon', targetLength: 21.39 },
   rescueVessel: { label: 'Rescue vessel', scale: 1, deckAnchor: [-1.95, 1.548, 0] },
   helicopter: { label: 'Helicopter', targetLength: 14.2 },
   cruiseShip: { label: 'Cruise ship', targetLength: 145 },
@@ -287,6 +287,7 @@ interface SharkAnimation {
 
 export class SharkModel {
   readonly root = new T.Group()
+  swimSpeed = 1
   private animation?: SharkAnimation
 
   constructor(private readonly kind: keyof typeof sharkClips, private readonly swimPhase = 0) {}
@@ -329,19 +330,21 @@ export class SharkModel {
     animation.mixer.update(0)
   }
 
-  bite(variant = 0) {
+  bite(variant = 0, speed = 1) {
     const animation = this.animation
     if (!animation) return false
     const next = animation.bites[variant % animation.bites.length]
     const previous = animation.activeBite ?? animation.swim
-    next.reset().play()
+    next.reset().setEffectiveTimeScale(speed).play()
     if (previous !== next) previous.crossFadeTo(next, biteFade, false)
     animation.activeBite = next
     return true
   }
 
   animate(dt: number) {
-    if (this.root.visible) this.animation?.mixer.update(dt)
+    if (!this.root.visible || !this.animation) return
+    this.animation.swim.setEffectiveTimeScale(this.swimSpeed)
+    this.animation.mixer.update(dt)
   }
 }
 
