@@ -436,56 +436,129 @@ export function hazard(type: 'debris' | 'reef' | 'barrel', radius: number) {
   return root
 }
 
+function roundedPanel(width: number, height: number, depth: number, corner: number, bevel: number) {
+  const x = width / 2
+  const y = height / 2
+  const shape = new T.Shape()
+  shape.moveTo(-x + corner, -y)
+  shape.lineTo(x - corner, -y)
+  shape.quadraticCurveTo(x, -y, x, -y + corner)
+  shape.lineTo(x, y - corner)
+  shape.quadraticCurveTo(x, y, x - corner, y)
+  shape.lineTo(-x + corner, y)
+  shape.quadraticCurveTo(-x, y, -x, y - corner)
+  shape.lineTo(-x, -y + corner)
+  shape.quadraticCurveTo(-x, -y, -x + corner, -y)
+  return new T.ExtrudeGeometry(shape, { depth, curveSegments: 12, bevelSize: bevel,
+    bevelThickness: bevel, bevelSegments: 5 }).translate(0, 0, -depth / 2)
+}
+
+function bridgeCompass() {
+  const canvas = document.createElement('canvas')
+  canvas.width = 1024
+  canvas.height = 512
+  const ctx = canvas.getContext('2d')!
+  const texture = new T.CanvasTexture(canvas)
+  texture.colorSpace = T.SRGBColorSpace
+  texture.anisotropy = 4
+  const screen = new T.MeshBasicMaterial({ map: texture, toneMapped: false })
+  const cardinal = ['N', 'E', 'S', 'W']
+  let lastHeading = -1
+  const wrapHeading = (degrees: number) => (degrees + 360) % 360
+  function setHeading(radians: number) {
+    const degrees = wrapHeading(Math.round(T.MathUtils.radToDeg(radians)))
+    if (lastHeading === degrees) return
+    lastHeading = degrees
+    ctx.fillStyle = '#081a21'
+    ctx.fillRect(0, 0, 1024, 512)
+    ctx.strokeStyle = '#29515a'
+    ctx.lineWidth = 6
+    ctx.strokeRect(22, 22, 980, 468)
+    ctx.textAlign = 'center'
+    ctx.fillStyle = '#98bec0'
+    ctx.font = '600 44px monospace'
+    ctx.fillText('HEADING', 512, 102)
+    ctx.fillStyle = '#e3fff8'
+    ctx.font = '700 150px monospace'
+    ctx.fillText(String(degrees).padStart(3, '0') + '°', 512, 267)
+    ctx.save()
+    ctx.beginPath()
+    ctx.rect(46, 310, 932, 155)
+    ctx.clip()
+    for (let tick = Math.ceil((degrees - 45) / 5) * 5; tick <= degrees + 45; tick += 5) {
+      const bearing = wrapHeading(tick)
+      const x = 512 + (tick - degrees) * 11
+      const major = bearing % 15 === 0
+      ctx.fillStyle = major ? '#b7e4e4' : '#558a91'
+      ctx.fillRect(x - 2, 344, 4, major ? 44 : 24)
+      if (major) {
+        ctx.font = '600 41px monospace'
+        ctx.fillText(bearing % 90 === 0 ? cardinal[bearing / 90] : String(bearing), x, 442)
+      }
+    }
+    ctx.restore()
+    ctx.fillStyle = '#ff944d'
+    ctx.beginPath()
+    ctx.moveTo(491, 318)
+    ctx.lineTo(533, 318)
+    ctx.lineTo(512, 346)
+    ctx.closePath()
+    ctx.fill()
+    texture.needsUpdate = true
+  }
+  setHeading(0)
+  return { screen, setHeading }
+}
+
 export function cockpit() {
   const root = new T.Group()
+  const shell = metal('#f5eee2', 0.5, 0.07)
+  const safetyOrange = metal('#f66c27', 0.39, 0.08)
+  const rubber = metal('#182327', 0.85, 0)
+  const satin = metal('#aabbbf', 0.4, 0.34)
+
+  // Camera-space console stays within reach as the vessel heels.
+  mesh(root, roundedPanel(4.05, 0.51, 0.61, 0.21, 0.065), shell, 0, -1.22, -2.05)
+  mesh(root, roundedPanel(3.87, 0.108, 0.53, 0.052, 0.033), safetyOrange, 0, -0.965, -2.064)
+  mesh(root, roundedPanel(3.56, 0.265, 0.055, 0.10, 0.024), rubber, 0, -1.16, -1.698)
+  for (const side of [-1, 1]) {
+    tube(root, rubber, [side * 1.50, -0.98, -2.02], [side * 1.81, 1.08, -2.24], 0.068)
+    tube(root, shell, [side * 1.49, -0.98, -1.98], [side * 1.80, 1.08, -2.20], 0.046)
+  }
+
+  const compass = bridgeCompass()
+  const display = new T.Group()
+  display.position.set(-0.94, -0.73, -1.86)
+  display.rotation.x = -0.12
+  root.add(display)
+  mesh(display, roundedPanel(0.85, 0.445, 0.12, 0.062, 0.027), shell, 0, 0, 0)
+  mesh(display, roundedPanel(0.75, 0.393, 0.032, 0.036, 0.012), rubber, 0, 0, 0.09)
+  mesh(display, new T.PlaneGeometry(0.70, 0.35), compass.screen, 0, 0, 0.121)
+
+  const column = new T.Group()
+  column.position.set(0.80, -0.63, -1.66)
+  column.rotation.x = -0.20
+  root.add(column)
+  tube(root, rubber, [0.80, -1.09, -1.93], [0.80, -0.69, -1.93], 0.09)
+  tube(column, rubber, [0, 0, -0.35], [0, 0, -0.025], 0.105)
   const wheel = new T.Group()
-  root.add(wheel)
-  const black = metal('#122025', 0.71)
-  const dash = metal('#4e5550', 0.49, 0.65)
-  // The scene is attached to the first-person camera in camera space.
-  box(root, black, 0, -1.12, -1.95, 9, 0.48, 0.56)
-  box(root, dash, 0, -0.90, -2.01, 8.8, 0.12, 0.61)
-  box(root, metal('#997a55', 0.52, 0.54), 0, -0.868, -1.67, 8.8, 0.029, 0.032)
-  box(root, black, 0, -0.856, -2.18, 8.75, 0.06, 0.075)
-  const bodyPaint = metal('#564233', 0.63)
-  box(root, bodyPaint, 0, -0.89, -3.85, 2.42, 0.12, 3.8)
-  for (const side of [-1, 1]) {
-    tube(root, steel, [side * 1.05, -0.60, -2.65], [side * 0.58, -0.66, -5], 0.022)
-    tube(root, steel, [side * 0.58, -0.67, -5], [side * 0.48, -0.87, -5.19], 0.022)
-    tube(root, steel, [side * 1.05, -0.60, -2.65], [side * 1.06, -0.90, -2.63], 0.023)
-    oval(root, side > 0 ? green : red, side * 0.77, -0.76, -4.12, 0.18, 0.035, 0.08)
-  }
-  box(root, black, 0, 1.43, -2.18, 9.8, 0.32, 0.46)
-  for (const side of [-1, 1]) {
-    const x = 2.17 * side
-    tube(root, dash, [x, -1.06, -1.94], [side * 1.85, 1.37, -2.18], 0.073)
-    tube(root, black, [x * 1.074, -1.06, -1.94], [side * 1.94, 1.37, -2.18], 0.048)
-  }
-  const lantern = new T.Group()
-  lantern.position.set(-1.33, 1.16, -2.2)
-  root.add(lantern)
-  tube(lantern, dark, [0, 0.14, 0], [0, -0.15, 0], 0.015)
-  oval(lantern, lamp, 0, -0.24, 0, 0.076, 0.105, 0.078)
-  tube(lantern, dark, [0, -0.37, 0], [0, -0.314, 0], 0.096)
-  tube(lantern, dark, [0, -0.19, 0], [0, -0.141, 0], 0.088)
-  wheel.position.set(0.58, -0.72, -1.39)
-  const wheelRim = new T.TorusGeometry(0.38, 0.036, 10, 42)
-  mesh(wheel, wheelRim, black, 0, 0, 0)
-  oval(wheel, dash, 0, 0, 0, 0.117, 0.117, 0.062)
+  column.add(wheel)
+  mesh(wheel, new T.TorusGeometry(0.276, 0.036, 24, 96), rubber, 0, 0, 0)
+  mesh(wheel, new T.TorusGeometry(0.249, 0.009, 12, 96), satin, 0, 0, 0.017)
   for (let i = 0; i < 3; i++) {
-    const angle = i * Math.PI * 2 / 3 - Math.PI / 2
-    tube(wheel, dash, [0, 0, 0], [Math.cos(angle) * 0.36, Math.sin(angle) * 0.36, 0], 0.026)
+    const angle = (i * 2 / 3 + 0.5) * Math.PI
+    tube(wheel, satin, [0, 0, 0], [Math.cos(angle) * 0.26, Math.sin(angle) * 0.26, 0], 0.024)
   }
-  const handMaterial = metal('#343b37', 0.85, 0.04)
-  for (const side of [-1, 1]) {
-    const glove = oval(wheel, handMaterial, side * 0.34, 0.18, 0.026, 0.085, 0.12, 0.047)
-    glove.rotation.z = -side * 0.5
-  }
-  const wiper = new T.Group()
-  wiper.position.set(0.02, -0.77, -2.02)
-  root.add(wiper)
-  tube(wiper, black, [0, 0, 0], [0, 0.58, 0], 0.018)
-  box(wiper, black, 0.031, 0.68, 0, 0.026, 0.64, 0.03).rotation.z = -0.12
+  oval(wheel, safetyOrange, 0, 0, 0.008, 0.112, 0.112, 0.061)
+  oval(wheel, shell, 0, 0, 0.057, 0.064, 0.064, 0.018)
+
+  mesh(root, roundedPanel(0.245, 0.126, 0.34, 0.055, 0.023), rubber, 1.23, -0.95, -1.72)
+  const throttle = new T.Group()
+  throttle.position.set(1.23, -0.89, -1.72)
+  root.add(throttle)
+  tube(throttle, satin, [0, 0, 0], [0, 0.255, 0], 0.028)
+  oval(throttle, safetyOrange, 0, 0.266, 0, 0.103, 0.052, 0.046)
+
   mergeStaticMeshes(root)
-  return { root, wheel, wiper, lantern }
+  return { root, wheel, throttle, setHeading: compass.setHeading }
 }

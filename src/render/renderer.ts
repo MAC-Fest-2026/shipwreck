@@ -20,6 +20,15 @@ const cyan = new T.Color('#73e6d5')
 const danger = new T.Color('#ff664c')
 const { smoothstep } = T.MathUtils
 const bootClearance = 0.02
+// Authored GLB coordinates. The bow points along +X.
+const wheelhouseEye = new T.Vector3(6.52, 3.72, 0)
+// Replace the exterior window assembly with slimmer pillars for the interior view.
+const wheelhouseOccluders = new Set([
+  'Laminated_pilothouse_lights', 'Formed_window_apertures', 'Ceramic_obscuration_bands',
+  'Glazing_flange_and_compression_seal', 'Rolled_corner_posts', 'welded_aluminium',
+  'Marine_frame_fasteners', 'Wiper_spindle_escutcheons', 'Wiper_spindle_locknuts', 'Rocker_pivot',
+  'Torx_drive_recesses',
+])
 
 // The top of the breach passes over the board at age zero.
 function boardBreachHeight(age: number) {
@@ -53,6 +62,8 @@ export class GameRenderer {
   private readonly raft = raft()
   private readonly ship = wreck()
   private readonly rescueBoat = rescueVessel()
+  private vesselHelm: T.Vector3 | null = null
+  private readonly driverHiddenParts: T.Object3D[] = []
   private readonly deckPassengers = new T.Group()
   private readonly deckSlots = roster.map((_, i) =>
     new T.Vector3((i % 4) * 1.07 - 1.8, 1.585 + bootClearance, 0.3 - Math.floor(i / 4) * 1.4))
@@ -198,6 +209,10 @@ export class GameRenderer {
         const deck = scene.getObjectByName('Cambered_nonskid_main_deck')
         // Sample the camber in boat-local coordinates before attaching the visual to the moving boat.
         scene.updateMatrixWorld(true)
+        this.vesselHelm = scene.localToWorld(wheelhouseEye.clone())
+        scene.traverse(part => {
+          if (wheelhouseOccluders.has(part.name.replace(/\d{3}$/, ''))) this.driverHiddenParts.push(part)
+        })
         const down = new T.Vector3(0, -1, 0)
         const ray = new T.Raycaster()
         const origin = new T.Vector3()
@@ -259,6 +274,11 @@ export class GameRenderer {
     this.rescueBeam.mesh.visible = isRescue && run.phase !== 'intro'
     this.boatGroup.visible = !isRescue
     this.cabin.root.visible = firstPerson
+    const vesselParent = firstPerson ? this.boatGroup : this.rescueGroup
+    if (this.rescueBoat.parent !== vesselParent) vesselParent.add(this.rescueBoat)
+    this.rescueBoat.visible = !firstPerson || !!this.vesselHelm
+    this.deckPassengers.visible = !firstPerson
+    for (const part of this.driverHiddenParts) part.visible = !firstPerson
     this.env.uniforms.time.value = t
     this.env.uniforms.dawn.value = arrival ? clamp(0.37 + run.elapsed / 15) : 0
     const flash = settings.flashes ? Math.max(0, 1 - (presentationTime % 13.42) * 5.8) * 0.72 : 0
@@ -279,7 +299,7 @@ export class GameRenderer {
     const animationDt = run.paused || run.autoStop || run.record ? 0 : dt
     if (isRescue) this.sharks.forEach(shark => shark.animate(animationDt))
     this.meg.animate(animationDt)
-    const weight = !this.initialized || newPhase && (firstPerson || arrival || run.phase === 'rescue') ? 1 : 1 - Math.exp(-dt * (firstPerson ? 8 : 3.6))
+    const weight = firstPerson || !this.initialized || newPhase && (arrival || run.phase === 'rescue') ? 1 : 1 - Math.exp(-dt * 3.6)
     this.camera.position.lerp(this.eye, weight)
     this.scratch.lerp(this.point, weight)
     this.camera.up.set(0, 1, 0)
@@ -403,8 +423,7 @@ export class GameRenderer {
       plank.rotation.set(0, rotation + warp * 0.32, Math.sin(t + index * 0.1) * 0.055)
     })
     this.rescueBoat.position.set(R.deploy, waveHeight(R.deploy, 0, t), 0)
-    this.rescueBoat.rotation.y = -0.13
-    this.rescueBoat.rotation.z = Math.sin(t * 1.7) * 0.043
+    this.rescueBoat.rotation.set(0, -0.13, Math.sin(t * 1.7) * 0.043, 'XYZ')
     this.schoolBuoy.visible = practice && !r.carried.length
     this.schoolBuoy.position.set(r.survivors[0].x, waveHeight(r.survivors[0].x, 0, t) + 0.25, 0)
     const carriers = r.carried
@@ -465,7 +484,7 @@ export class GameRenderer {
       this.point.set(13, 6 + path * 5, -926)
       this.rescueGroup.visible = true
       this.rescueBoat.position.set(2.8, waveHeight(1, -902, t), -903)
-      this.rescueBoat.rotation.y = Math.PI / 2
+      this.rescueBoat.rotation.set(0, Math.PI / 2, 0, 'XYZ')
       const visible = this.rescueGroup.children
       visible.forEach(item => { item.visible = item === this.rescueBoat || item === this.helo.root || this.people.some(p => p.root === item) })
       this.helo.root.position.set(12 - path * 37, 18 + path * 2, -931)
@@ -485,11 +504,16 @@ export class GameRenderer {
     }
     const water = waveHeight(b.x, -b.z, t)
     const shake = !reduced && b.time - b.lastImpact < 0.48 ? Math.sin(t * 75) * (0.48 - (b.time - b.lastImpact)) : 0
-    this.eye.set(b.x + shake, 2.58 + water * (reduced ? 0.13 : 0.56), -b.z)
-    this.point.set(b.x + Math.sin(b.heading) * 48, 1.15 + water * 0.55, -b.z - Math.cos(b.heading) * 48)
-    this.cabin.wheel.rotation.z = -b.steer * 0.82
-    this.cabin.wiper.rotation.z = reduced ? -0.85 : -0.80 - Math.cos(t * 1.9) * 0.63
-    this.cabin.lantern.rotation.z = reduced ? 0 : Math.sin(t * 2.0) * 0.14 + b.roll
+    this.eye.set(b.x + shake, (this.vesselHelm?.y ?? wheelhouseEye.y) + water * (reduced ? 0.13 : 0.56), -b.z)
+    this.point.set(this.eye.x + Math.sin(b.heading) * 48, this.eye.y - 4.2, -b.z - Math.cos(b.heading) * 48)
+    if (this.vesselHelm) {
+      this.rescueBoat.rotation.set(reduced ? 0 : -b.roll, Math.PI / 2 - b.heading, 0, 'YXZ')
+      // Anchor the wheelhouse to the existing navigation point so the render pose cannot drift from the camera.
+      this.rescueBoat.position.copy(this.vesselHelm).applyQuaternion(this.rescueBoat.quaternion).negate().add(this.eye)
+    }
+    this.cabin.wheel.rotation.z = -b.steer * 1.55
+    this.cabin.throttle.rotation.x = lerp(-0.45, 0.56, run.desired.throttle)
+    this.cabin.setHeading(b.heading)
     this.obstacles.children.forEach((model, i) => {
       const h = b.hazards[i]
       model.visible = h.z < b.z + 230 && h.z > b.z - 15
@@ -516,7 +540,7 @@ export class GameRenderer {
     const target = new T.Vector3(bearing, 24.7, 116)
     placeBeam(this.lightBeam.mesh, new T.Vector3(7, 25.9, 6), target)
     this.lightBeam.intensity.value = 0.44
-    return 59
+    return 61
   }
 
   private drawRain(t: number, reduced: boolean) {
