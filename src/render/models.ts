@@ -2,6 +2,30 @@ import * as T from 'three'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import { seededRandom } from '../core/math'
 
+// Visual lengths in scene units. Survivors, the wooden board, and the rescue deck are fixed references.
+export const MODEL_SCALES = {
+  regularShark: { label: 'Regular shark', targetLength: 6.2 },
+  megalodon: { label: 'Megalodon', targetLength: 18.6 },
+  rescueVessel: { label: 'Rescue vessel', scale: 1, deckAnchor: [-1.95, 1.548, 0] },
+  helicopter: { label: 'Helicopter', targetLength: 14.2 },
+  cruiseShip: { label: 'Cruise ship', targetLength: 145 },
+  island: { label: 'Island', targetLength: 100 },
+  rocks: { label: 'Rocks', targetLength: 7.5, referenceRadius: 4.5 },
+} as const
+
+export type ScaledModel = keyof typeof MODEL_SCALES
+
+/** Fit a detached model in its neutral pose. Length is its longer horizontal span. */
+export function fitModelScale(name: ScaledModel, model: T.Object3D, lengthMultiplier = 1) {
+  const { x, y, z } = new T.Box3().setFromObject(model, true).getSize(new T.Vector3())
+  const length = Math.max(x, z)
+  const rule = MODEL_SCALES[name]
+  if (!Number.isFinite(length) || length <= 0) throw new Error(`Unable to measure ${rule.label}.`)
+  const scale = 'targetLength' in rule ? rule.targetLength * lengthMultiplier / length : rule.scale
+  model.scale.multiplyScalar(scale)
+  return { length: length * scale, width: Math.min(x, z) * scale, height: y * scale, scale }
+}
+
 const materials = new Map<string, T.MeshStandardMaterial>()
 export function metal(color: string, roughness = 0.64, metalness = 0.25) {
   const key = [color, roughness, metalness].join('/')
@@ -177,22 +201,25 @@ export function claw() {
 
 export function rescueVessel() {
   const root = new T.Group()
+  const deckMarks = new T.Group()
+  deckMarks.name = 'RescueDeckMarks'
+  root.add(deckMarks)
   const hullShape: [number, number][] = [[-5.1, -1.05], [-6.2, 0.5], [-5.9, 1.18], [6.6, 1.18], [6.2, -0.82], [5, -1.05]]
   mesh(root, extrude(hullShape, 3.5), orange, 4.1, 0, -1.75)
   box(root, dark, 4.2, 0.11, 0, 11.9, 0.27, 3.65)
   box(root, steel, 4.45, 1.34, 0, 11.65, 0.26, 3.66)
   box(root, dark, 0, 1.53, 0, 7.3, 0.11, 4.28)
   for (const side of [-1, 1]) {
-    box(root, green, 0, 1.61, side * 2.04, 7.05, 0.07, 0.074)
-    box(root, green, side * 3.51, 1.61, 0, 0.074, 0.07, 4.13)
+    box(deckMarks, green, 0, 1.61, side * 2.04, 7.05, 0.07, 0.074)
+    box(deckMarks, green, side * 3.51, 1.61, 0, 0.074, 0.07, 4.13)
     for (let x = 4.1; x < 10; x += 1.5) tube(root, steel, [x, 1.38, side * 1.67], [x, 2.5, side * 1.67], 0.036)
     tube(root, steel, [4, 2.5, side * 1.67], [9.3, 2.5, side * 1.67], 0.034)
     const lifeRing = mesh(root, new T.TorusGeometry(0.33, 0.11, 6, 16), orange, 4.58, 2.36, side * 1.6)
     lifeRing.rotation.y = side * 0.07
     oval(root, side < 0 ? green : red, 7.5, 4.3, side * 1.41, 0.13, 0.12, 0.14)
   }
-  box(root, light('#c3dfc7'), 0, 1.602, 0, 0.3, 0.016, 1.3)
-  for (const z of [-0.65, 0.65]) box(root, light('#c3dfc7'), 0, 1.602, z, 1.2, 0.016, 0.25)
+  box(deckMarks, light('#c3dfc7'), 0, 1.602, 0, 0.3, 0.016, 1.3)
+  for (const z of [-0.65, 0.65]) box(deckMarks, light('#c3dfc7'), 0, 1.602, z, 1.2, 0.016, 0.25)
   box(root, steel, 6.8, 2.87, 0, 3.8, 2.64, 2.95)
   box(root, orange, 6.8, 4.23, 0, 4.22, 0.22, 3.21)
   for (const x of [5.72, 7.03, 8.08]) {
@@ -203,6 +230,7 @@ export function rescueVessel() {
   tube(root, steel, [6.55, 4.27, 0], [6.55, 7.95, 0], 0.105)
   tube(root, steel, [6.55, 6.25, -1.01], [6.55, 6.25, 1.01], 0.055)
   oval(root, lamp, 6.55, 8, 0, 0.14, 0.15, 0.14)
+  mergeStaticMeshes(deckMarks)
   mergeStaticMeshes(root)
   return root
 }
@@ -300,11 +328,8 @@ export function wreck() {
   return root
 }
 
-export function lighthouse(parent: T.Object3D, x: number, z: number, size = 1) {
+export function lighthouse() {
   const root = new T.Group()
-  root.position.set(x, 0, z)
-  root.scale.setScalar(size)
-  parent.add(root)
   const rng = seededRandom(81)
   for (let i = 0; i < 21; i++) {
     const p = mesh(root, rockGeo, metal(i % 2 ? '#34484a' : '#354943'), (rng() - 0.5) * 78, -1 + rng() * 4, (rng() - 0.3) * 37)

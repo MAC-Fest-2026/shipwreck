@@ -1,4 +1,5 @@
 import * as T from 'three'
+import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 import { BloomEffect, EffectComposer, EffectPass, RenderPass, VignetteEffect } from 'postprocessing'
 import { tuning } from '../app/tuning'
@@ -7,7 +8,8 @@ import type { Session } from '../game/session'
 import { roster } from '../sim/rescue'
 import { waveHeight } from '../sim/water'
 import { beam, environment, placeBeam } from './environment'
-import { claw, cockpit, dock, hazard, helicopter, light, lighthouse, person, raft, rescueVessel, shark, wreck } from './models'
+import { claw, cockpit, dock, fitModelScale, hazard, helicopter, light, lighthouse, MODEL_SCALES, person, raft,
+  rescueVessel, shark, wreck, type ScaledModel } from './models'
 
 export type Quality = 'low' | 'medium' | 'high'
 export interface RenderSettings { quality: Quality; reduceMotion: boolean; flashes: boolean }
@@ -31,7 +33,7 @@ export class GameRenderer {
   private readonly upperLight = new T.HemisphereLight('#b3d8eb', '#414545', 2.48)
   private readonly rim = new T.DirectionalLight('#ffc28a', 2.35)
   private readonly flashLight = new T.DirectionalLight('#acd9ff', 0)
-  private readonly helo = helicopter()
+  private readonly helo: ReturnType<typeof helicopter>
   private readonly picker = claw()
   private readonly raft = raft()
   private readonly ship = wreck()
@@ -42,8 +44,9 @@ export class GameRenderer {
   private readonly sharks = Array.from({ length: 3 }, () => shark())
   private readonly meg = shark()
   private readonly rescueBeam = beam(this.scene)
-  private readonly island = lighthouse(this.scene, 31, -950, 1.15)
-  private readonly lightBeam = beam(this.island, '#ffbf65')
+  private readonly island = lighthouse()
+  private readonly lightBeam: ReturnType<typeof beam>
+  private readonly modelSizes: Record<ScaledModel, ReturnType<typeof fitModelScale>>
   private readonly schoolBuoy = hazard('barrel', 1.15)
   private readonly cabin = cockpit()
   private readonly rescueGroup = new T.Group()
@@ -72,6 +75,20 @@ export class GameRenderer {
   get stats() { return { fps: this.fps, calls: this.renderer.info.render.calls, triangles: this.renderer.info.render.triangles, scale: this.scale } }
 
   constructor(container: HTMLElement, onContext: (lost: boolean) => void) {
+    const heloModel = helicopter()
+    this.helo = { ...heloModel, root: new T.Group().add(heloModel.root) }
+    this.modelSizes = {
+      regularShark: this.sharks.map(({ root }) => fitModelScale('regularShark', root))[0],
+      megalodon: fitModelScale('megalodon', this.meg.root),
+      rescueVessel: fitModelScale('rescueVessel', this.rescueBoat),
+      helicopter: fitModelScale('helicopter', heloModel.root),
+      cruiseShip: fitModelScale('cruiseShip', this.ship),
+      island: fitModelScale('island', this.island),
+      rocks: fitModelScale('rocks', hazard('reef', MODEL_SCALES.rocks.referenceRadius)),
+    }
+    this.island.position.set(31, 0, -950)
+    this.lightBeam = beam(this.island, '#ffbf65')
+
     this.renderer = new T.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' })
     this.renderer.setClearColor('#1f3640')
     this.renderer.toneMapping = T.ACESFilmicToneMapping
@@ -118,21 +135,45 @@ export class GameRenderer {
   }
 
   private async loadModels() {
-    const loader = new GLTFLoader()
-    const path = import.meta.env.BASE_URL + 'models/'
+    const base = import.meta.env.BASE_URL
+    const decoders = new URL(base + 'decoders/', document.baseURI)
+    const draco = new DRACOLoader().setDecoderPath(new URL('draco/', decoders).href)
+    const loader = new GLTFLoader().setDRACOLoader(draco)
+    const meshoptUrl = new URL('meshopt_decoder.module.js', decoders).href
+    const meshopt: typeof import('three/addons/libs/meshopt_decoder.module.js') | null =
+      await import(/* @vite-ignore */ meshoptUrl).catch((error: unknown) => {
+        console.warn('[models] Meshopt decoder could not load.', error)
+        return null
+      })
+    if (meshopt) loader.setMeshoptDecoder(meshopt.MeshoptDecoder)
+
+    const path = base + 'models/'
     await Promise.allSettled([
       loader.loadAsync(path + 'sar-helicopter.glb').then(({ scene }) => {
         const rotor = scene.getObjectByName('MainRotor')
         const tail = scene.getObjectByName('TailRotor')
         if (!rotor || !tail) return
+        this.modelSizes.helicopter = fitModelScale('helicopter', scene)
         this.helo.root.clear().add(scene)
         this.helo.rotor = rotor as T.Group
         this.helo.tailRotor = tail as T.Group
       }),
       loader.loadAsync(path + 'rescue-vessel.glb').then(({ scene }) => {
+        this.modelSizes.rescueVessel = fitModelScale('rescueVessel', scene)
+        // The GLB's recovery deck is aft of its origin. Align it to the existing drop zone at full scale.
+        const [deckX, deckY, deckZ] = MODEL_SCALES.rescueVessel.deckAnchor
+        scene.position.add(new T.Vector3(-deckX, R.deckY - deckY, -deckZ))
+        const deckMarks = this.rescueBoat.getObjectByName('RescueDeckMarks')
         this.rescueBoat.clear().add(scene)
+        if (deckMarks) this.rescueBoat.add(deckMarks)
       }),
     ])
+    draco.dispose()
+
+    for (const name of Object.keys(MODEL_SCALES) as ScaledModel[]) {
+      const { length, width, height, scale } = this.modelSizes[name]
+      console.info(`[models] ${MODEL_SCALES[name].label} length=${length.toFixed(2)} width=${width.toFixed(2)} height=${height.toFixed(2)} scale=${scale.toFixed(4)}`)
+    }
   }
 
   resize() {
@@ -219,6 +260,7 @@ export class GameRenderer {
     this.obstacles.clear()
     for (const obstacle of run.boat.hazards) {
       const model = hazard(obstacle.type, obstacle.radius)
+      if (obstacle.type === 'reef') fitModelScale('rocks', model, obstacle.radius / MODEL_SCALES.rocks.referenceRadius)
       model.position.set(obstacle.x, 0, -obstacle.z)
       model.rotation.y = obstacle.z * 0.31
       this.obstacles.add(model)
@@ -241,7 +283,6 @@ export class GameRenderer {
       this.point.set(-38, 7.0, -7)
       this.meg.root.visible = run.elapsed > 7
       this.meg.root.position.set(-73 + run.elapsed * 2.4, -2.35, 14)
-      this.meg.root.scale.setScalar(4.0)
       this.meg.root.rotation.set(0, Math.PI, -0.02)
       const split = clamp(run.elapsed / 7)
       this.ship.children[0].rotation.z = lerp(-0.06, -0.25, split)
@@ -259,7 +300,6 @@ export class GameRenderer {
     const warning = t - r.warningTime
     if (!inIntro && (warning >= 0 && warning < 4 || breach >= 0 && breach < 4.75)) {
       this.meg.root.visible = true
-      this.meg.root.scale.setScalar(4)
       const breachAge = Math.max(0, breach)
       const arc = breach < 0 ? -2.8 : -3 + 12 * Math.sin(clamp(breachAge / 4.75) * Math.PI)
       this.meg.root.position.set(-39 + breachAge * 2.4, arc, -3 + breachAge * 0.16)
@@ -382,7 +422,6 @@ export class GameRenderer {
     if (active) {
       const age = t - active.time
       this.meg.root.visible = true
-      this.meg.root.scale.setScalar(4.3)
       const arc = age < 2.4 ? -3.7 : -4.8 + 9.1 * Math.sin(clamp((age - 2.4) / 2.6) * Math.PI)
       const side = active.z < 600 ? -1 : 1
       this.meg.root.position.set(active.x + (3.2 - age) * 6 * side, arc, -Math.max(active.z, b.z + 12))
