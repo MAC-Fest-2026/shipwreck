@@ -3,6 +3,7 @@ import { neutralIntent } from '../src/input/intent'
 import { pilotBot, replay, defaultAssists } from '../src/game/replay'
 import { scoreRun } from '../src/game/score'
 import { Session } from '../src/game/session'
+import { Boat, reefContact, rockProfiles, type ReefHazard } from '../src/sim/boat'
 import { Rescue } from '../src/sim/rescue'
 import { tuning } from '../src/app/tuning'
 import { toCsv } from '../src/persistence/scores'
@@ -59,5 +60,26 @@ describe('complete run', () => {
   it('computes time and integrity points only in eligible outcomes', () => {
     expect(scoreRun(8000, 125, 95, 75, true, 'completed')).toBe(10790)
     expect(scoreRun(-3200, 150, 0, 100, false, 'failed_all_lost')).toBe(0)
+  })
+})
+
+describe('ocean rocks', () => {
+  it('places each variant once or more with a clear central lane', () => {
+    for (const seed of [1, 2, 81, tuning.seed]) {
+      const rocks = new Boat(seed, () => {}).hazards.filter(h => h.type === 'reef').filter(h => !h.island)
+      expect(new Set(rocks.map(h => h.variant))).toEqual(new Set(Object.keys(rockProfiles)))
+      expect(new Set(rocks.map(h => `${h.x},${h.z}`)).size).toBe(rocks.length)
+      expect(Math.min(...rocks.map(h => Math.abs(h.x) - h.radius - 1.1))).toBeGreaterThan(8)
+    }
+  })
+
+  it('rotates an elongated reef hitbox with the displayed rock', () => {
+    const reef: ReefHazard = { type: 'reef', variant: 'Reef_04', x: 12, z: 400, length: 10,
+      radius: rockProfiles.Reef_04[3] * 10, yaw: 0, hit: false, island: false }
+    expect(reefContact(reef, 8.4, 400, 0)).toBe(true)
+    expect(reefContact(reef, 12, 403.6, 0)).toBe(false)
+    reef.yaw = Math.PI / 2
+    expect(reefContact(reef, 8.4, 400, 0)).toBe(false)
+    expect(reefContact(reef, 12, 396.4, 0)).toBe(true)
   })
 })

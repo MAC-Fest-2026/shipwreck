@@ -5,12 +5,12 @@ import { BloomEffect, EffectComposer, EffectPass, RenderPass, VignetteEffect } f
 import { tuning } from '../app/tuning'
 import { clamp, damp, lerp, seededRandom } from '../core/math'
 import { timelines, type Session } from '../game/session'
-import { boatLungePosition, boatLungeTiming } from '../sim/boat'
+import { boatLungePosition, boatLungeTiming, islandCrown, type FloatingHazard } from '../sim/boat'
 import { roster } from '../sim/rescue'
 import { waterGlsl, waveHeight } from '../sim/water'
 import { beam, environment, placeBeam, wreckAtmosphere } from './environment'
-import { claw, cockpit, dock, fitModelScale, hazard, HelicopterModel, light, lighthouse, MODEL_SCALES, person, prepareCruiseWreck, raft,
-  rescueVessel, SharkModel, wreck, type ScaledModel } from './models'
+import { claw, cockpit, dock, fitModelScale, hazard, HelicopterModel, instanceRocks, light, lighthouse, MODEL_SCALES, person,
+  prepareCruiseWreck, prepareRockSet, raft, rescueVessel, SharkModel, wreck, type ScaledModel } from './models'
 
 export type Quality = 'low' | 'medium' | 'high'
 export interface RenderSettings { quality: Quality; reduceMotion: boolean; flashes: boolean }
@@ -298,7 +298,10 @@ export class GameRenderer {
   private readonly animatedAttacks = new WeakSet<object>()
   private nextSharkBite = 0
   private readonly rescueBeam = beam(this.scene)
-  private readonly island = lighthouse()
+  private readonly island = new T.Group()
+  private readonly tower = lighthouse()
+  private readonly reefs = new T.Group()
+  private rockSet: ReturnType<typeof prepareRockSet> | null = null
   private readonly lightBeam: ReturnType<typeof beam>
   private readonly modelSizes: Partial<Record<ScaledModel, ReturnType<typeof fitModelScale>>>
   private readonly schoolBuoy = hazard('barrel', 1.15)
@@ -306,6 +309,7 @@ export class GameRenderer {
   private readonly rescueGroup = new T.Group()
   private readonly boatGroup = new T.Group()
   private readonly obstacles = new T.Group()
+  private readonly floatingHazards = new Map<FloatingHazard, T.Group>()
   private readonly rope = new T.Line(new T.BufferGeometry(), new T.LineBasicMaterial({ color: '#b5a998' }))
   private readonly winchStart = new T.Vector3()
   private readonly beamSource = new T.Vector3()
@@ -334,19 +338,14 @@ export class GameRenderer {
   constructor(container: HTMLElement, onContext: (lost: boolean) => void) {
     const fallbackShip = wreck()
     this.ship.add(fallbackShip)
-    const islandSize = fitModelScale('island', this.island)
     this.modelSizes = {
       rescueVessel: fitModelScale('rescueVessel', this.rescueBoat),
       helicopter: this.helo.fallbackSize,
       cruiseShip: fitModelScale('cruiseShip', fallbackShip),
-      island: islandSize,
-      rocks: fitModelScale('rocks', hazard('reef', MODEL_SCALES.rocks.referenceRadius)),
     }
     this.rescueBoat.add(this.deckPassengers)
-    this.island.position.set(31, 0, -950)
-    this.env.uniforms.shoal.value.set(this.island.position.x, this.island.position.z,
-      1 / (islandSize.length * 0.5 + 12), 1 / (islandSize.width * 0.5 + 18))
-    this.lightBeam = beam(this.island, '#ffbf65')
+    this.env.uniforms.shoal.value.set(31, -950, 1 / 62, 1 / 50)
+    this.lightBeam = beam(this.tower, '#ffbf65')
 
     this.renderer = new T.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' })
     this.renderer.setClearColor('#1f3640')
@@ -376,7 +375,7 @@ export class GameRenderer {
     this.rescueBoat.position.x = R.deploy
     this.rope.geometry.setAttribute('position', new T.BufferAttribute(new Float32Array(21), 3))
     this.rope.frustumCulled = false
-    this.boatGroup.add(this.island, this.obstacles)
+    this.boatGroup.add(this.island, this.reefs, this.obstacles)
     dock(this.boatGroup, -901)
     this.scene.add(this.rain)
     this.rain.frustumCulled = false
@@ -430,6 +429,12 @@ export class GameRenderer {
         this.ship.clear().add(scene, interior)
         this.wreckLoaded = true
       }).catch((error: unknown) => console.warn('[models] Could not load cruise_ship_wreck.glb.', error)),
+      loader.loadAsync(path + 'ocean-rocks.glb').then(({ scene }) => {
+        const asset = prepareRockSet(scene)
+        this.rockSet = asset
+        this.modelSizes.rocks = asset.referenceSize
+        if (this.lastRun) this.placeReefs(this.lastRun)
+      }).catch((error: unknown) => console.warn('[models] Could not load ocean-rocks.glb.', error)),
       loader.loadAsync(path + 'rescue-vessel.glb').then(({ scene }) => {
         this.modelSizes.rescueVessel = fitModelScale('rescueVessel', scene)
         // The GLB's recovery deck is aft of its origin. Align it to the existing drop zone at full scale.
@@ -577,13 +582,40 @@ export class GameRenderer {
     this.sharks.forEach(shark => shark.resetAnimation())
     this.meg.resetAnimation()
     this.obstacles.clear()
+    this.floatingHazards.clear()
     for (const obstacle of run.boat.hazards) {
+      if (obstacle.type === 'reef') continue
       const model = hazard(obstacle.type, obstacle.radius)
-      if (obstacle.type === 'reef') fitModelScale('rocks', model, obstacle.radius / MODEL_SCALES.rocks.referenceRadius)
       model.position.set(obstacle.x, 0, -obstacle.z)
       model.rotation.y = obstacle.z * 0.31
       this.obstacles.add(model)
+      this.floatingHazards.set(obstacle, model)
     }
+    this.placeReefs(run)
+  }
+
+  private placeReefs(run: Session) {
+    const asset = this.rockSet
+    // A failed or pending load must not make interactive players hit invisible rocks.
+    run.boat.reefsActive = !!asset || run.inputMode === 'replay'
+    if (!asset) return
+    for (const batch of this.reefs.children) (batch as T.InstancedMesh).dispose()
+    this.reefs.clear()
+    const rocks = run.boat.hazards.filter(rock => rock.type === 'reef')
+    const channel = rocks.filter(rock => !rock.island && rock.z < 650)
+    const approach = rocks.filter(rock => !rock.island && rock.z >= 650)
+    this.reefs.add(...instanceRocks(asset, channel), ...instanceRocks(asset, approach))
+
+    if (this.island.children.length) return
+    const coast = rocks.filter(rock => rock.island)
+    const foundation = coast.find(rock => rock.variant === islandCrown.variant)!
+    this.tower.position.set(foundation.x - 7, foundation.length * islandCrown.heightPerUnit - 8.55, -foundation.z - 6)
+    this.island.add(...instanceRocks(asset, coast), this.tower)
+    const bounds = new T.Box3().setFromObject(this.island)
+    const size = bounds.getSize(new T.Vector3())
+    const center = bounds.getCenter(new T.Vector3())
+    this.modelSizes.island = { length: size.x, width: size.z, height: size.y, scale: MODEL_SCALES.island.targetLength / 100 }
+    this.env.uniforms.shoal.value.set(center.x, center.z, 1 / (size.x * 0.5 + 12), 1 / (size.z * 0.5 + 18))
   }
 
   private drawRescue(run: Session, t: number, departure: boolean, reduced: boolean, dt: number) {
@@ -775,11 +807,10 @@ export class GameRenderer {
     this.cabin.wheel.rotation.z = -b.steer * 1.55
     this.cabin.throttle.rotation.x = lerp(-0.45, 0.56, run.desired.throttle)
     this.cabin.setHeading(b.heading)
-    this.obstacles.children.forEach((model, i) => {
-      const h = b.hazards[i]
+    for (const [h, model] of this.floatingHazards) {
       model.visible = h.z < b.z + 230 && h.z > b.z - 15
-      if (model.visible && h.type !== 'reef') model.position.y = waveHeight(h.x, -h.z, t)
-    })
+      if (model.visible) model.position.y = waveHeight(h.x, -h.z, t)
+    }
     const active = b.lunges.find(l => l.time >= 0 && t - l.time < boatLungeTiming.end)
     if (active) {
       const age = t - active.time

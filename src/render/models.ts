@@ -2,6 +2,7 @@ import * as T from 'three'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import { clone as cloneSkeleton } from 'three/addons/utils/SkeletonUtils.js'
 import { clamp, damp, seededRandom } from '../core/math'
+import { reefScales, rockProfiles, type FloatingHazard, type ReefHazard, type RockVariant } from '../sim/boat'
 
 // Visual lengths in scene units. Survivors, the wooden board, and the rescue deck are fixed references.
 export const MODEL_SCALES = {
@@ -10,8 +11,7 @@ export const MODEL_SCALES = {
   rescueVessel: { label: 'Rescue vessel', scale: 1, deckAnchor: [-1.95, 1.548, 0] },
   helicopter: { label: 'Helicopter', targetLength: 14.2 },
   cruiseShip: { label: 'Cruise ship', targetLength: 145 },
-  island: { label: 'Island', targetLength: 100 },
-  rocks: { label: 'Rocks', targetLength: 7.5, referenceRadius: 4.5 },
+  ...reefScales,
 } as const
 
 export type ScaledModel = keyof typeof MODEL_SCALES
@@ -54,7 +54,6 @@ type Material = T.Material
 const cube = new T.BoxGeometry()
 const sphere = new T.SphereGeometry(1, 20, 12)
 const cylinder = new T.CylinderGeometry(1, 1, 1, 16)
-const rockGeo = new T.DodecahedronGeometry(1, 0)
 export function mesh(parent: T.Object3D, geo: T.BufferGeometry, material: Material, x: number, y: number, z: number) {
   const result = new T.Mesh(geo, material)
   result.position.set(x, y, z)
@@ -482,14 +481,44 @@ export function prepareCruiseWreck(model: T.Object3D) {
   return size
 }
 
+export function prepareRockSet(scene: T.Object3D) {
+  const variants = new Map((Object.keys(rockProfiles) as RockVariant[]).map(name => {
+    const source = scene.getObjectByName(name)
+    if (!(source instanceof T.Mesh)) throw new Error(`Missing ocean rock ${name}.`)
+    return [name, { source, size: fitModelScale('rocks', source) }] as const
+  }))
+  return { variants, referenceSize: variants.get('Boulder_01')!.size }
+}
+
+export function instanceRocks(asset: ReturnType<typeof prepareRockSet>, rocks: readonly ReefHazard[]) {
+  const batches = new Map<RockVariant, ReefHazard[]>()
+  for (const rock of rocks) {
+    const group = batches.get(rock.variant)
+    if (group) group.push(rock)
+    else batches.set(rock.variant, [rock])
+  }
+  const pose = new T.Object3D()
+  return Array.from(batches, ([name, placements]) => {
+    const { source, size } = asset.variants.get(name)!
+    const [pitch, roll, sink] = rockProfiles[name]
+    const batch = new T.InstancedMesh(source.geometry, source.material, placements.length)
+    batch.name = name
+    pose.rotation.set(T.MathUtils.degToRad(pitch), 0, T.MathUtils.degToRad(roll), 'YXZ')
+    placements.forEach((rock, index) => {
+      pose.position.set(rock.x, -sink * rock.length, -rock.z)
+      pose.rotation.y = rock.yaw
+      pose.scale.setScalar(size.scale * rock.length / MODEL_SCALES.rocks.targetLength)
+      pose.updateMatrix()
+      batch.setMatrixAt(index, pose.matrix)
+    })
+    batch.instanceMatrix.needsUpdate = true
+    batch.computeBoundingSphere()
+    return batch
+  })
+}
+
 export function lighthouse() {
   const root = new T.Group()
-  const rng = seededRandom(81)
-  for (let i = 0; i < 21; i++) {
-    const p = mesh(root, rockGeo, metal(i % 2 ? '#34484a' : '#354943'), (rng() - 0.5) * 78, -1 + rng() * 4, (rng() - 0.3) * 37)
-    p.scale.set(7 + rng() * 14, 3 + rng() * 8, 7 + rng() * 12)
-    p.rotation.set(rng(), rng() * 6, rng())
-  }
   for (let i = 0; i < 5; i++) {
     const r = 2.7 - i * 0.28
     const segment = mesh(root, new T.CylinderGeometry(r - 0.24, r, 3.45, 18), metal(i % 2 === 0 ? '#c1b59c' : '#95482e'), 7, 9.65 + i * 3.45, 6)
@@ -514,22 +543,16 @@ export function dock(parent: T.Object3D, z: number) {
   }
 }
 
-export function hazard(type: 'debris' | 'reef' | 'barrel', radius: number) {
+export function hazard(type: FloatingHazard['type'], radius: number) {
   const root = new T.Group()
   if (type === 'debris') {
     for (let index = 0; index < 4; index++) {
       const piece = box(root, wood[index], (index - 1.5) * 0.44, 0.1, 0, 0.37, 0.22, radius * 1.6)
       piece.rotation.y = 0.15 * index
     }
-  } else if (type === 'barrel') {
+  } else {
     tube(root, orange, [0, -0.55, 0], [0, 0.67, 0], radius * 0.55)
     for (const y of [-0.34, 0.49]) tube(root, dark, [0, y, 0], [0, y + 0.12, 0], radius * 0.57)
-  } else {
-    const r = mesh(root, rockGeo, metal('#334a4a', 0.91), 0, 0.72, 0)
-    r.scale.set(radius * 0.84, radius * 0.49, radius * 0.76)
-    r.rotation.set(0.3, 0.9, -0.27)
-    mesh(root, rockGeo, metal('#496263'), radius * 0.42, 0.13, radius * 0.38)
-      .scale.set(radius * 0.35, radius * 0.21, radius * 0.52)
   }
   return root
 }
