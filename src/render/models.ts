@@ -454,35 +454,32 @@ export function wreck() {
   const hull = metal('#263c43')
   const faded = metal('#607c82')
   const black = metal('#142026')
-  for (const [offset, angle, size] of [[-22, -0.22, 37], [15, 0.29, 27]]) {
-    const part = new T.Group()
-    part.rotation.z = angle
-    part.position.set(offset, 0, 0)
-    root.add(part)
-    const w = size / 2
-    mesh(part, extrude([[-w, 5.2], [-w + 4.8, -2.0], [w, -2], [w - 1.2, 5.1]], 7.5), hull, 0, 0, -3.75)
-    box(part, faded, 0.35, 5.2, 0, size - 4, 0.64, 7.25)
-    for (let level = 0; level < 3; level++) {
-      const width = size - 9 - level * 4
-      box(part, faded, 1, 6.3 + level * 1.56, 0, width, 1.56, 6.2 - level * 1.27)
-      for (let x = 2 - width * 0.5; x < width * 0.5; x += 1.85) {
-        box(part, (Math.floor(x + 20 + level) % 7 === 0) ? lamp : black, x, 6.4 + level * 1.56, 3.14 - level * 0.636, 0.97, 0.59, 0.08)
+  mesh(root, extrude([[-32, 4.7], [-28, -3.2], [25, -3.2], [32, 4.7]], 9.8), hull, 0, 0, -4.9)
+  for (let level = 0; level < 4; level++) {
+    const length = 54 - level * 5
+    const width = 9.4 - level * 0.7
+    const y = 5.6 + level * 1.55
+    box(root, faded, -1, y, 0, length, 1.55, width)
+    for (const side of [-1, 1]) {
+      for (let x = 1 - length / 2; x < length / 2 - 2; x += 2) {
+        box(root, black, x, y + 0.1, side * width / 2, 1.1, 0.52, 0.06)
       }
     }
-    tube(part, dark, [2, 9.7, 0], [2, 15.2, 0], 0.22)
-    tube(part, dark, [0, 13.2, 0], [4.6, 13.2, 0], 0.14)
-    if (angle > 0) box(part, hull, 4.7, 11.6, 0, 4.0, 4.7, 3.1).rotation.z = 0.14
-    // Exposed framing at the fault line and a rust-painted load line.
-    const brokenEdge = (angle < 0 ? w : -w + 4.3)
-    const rust = metal('#6e5143', 0.91)
-    box(part, rust, 0, 2.3, 3.78, size - 1.2, 0.32, 0.11)
-    for (let j = 0; j < 6; j++) {
-      const spar = box(part, hull, brokenEdge + (j % 2) * 1.1, 2.5 + j * 0.69, (j - 3) * 0.92, 3.4, 0.16, 0.21)
-      spar.rotation.z = 0.34 * Math.sin(j * 3)
-    }
-    mergeStaticMeshes(part)
   }
+  box(root, dark, -7, 12.9, 0, 3, 4.2, 3.3).rotation.z = 0.16
+  mergeStaticMeshes(root)
   return root
+}
+
+export function prepareCruiseWreck(model: T.Object3D) {
+  // The authored bow points along +Z and the geometry is offset from the origin.
+  model.rotation.y = Math.PI / 2
+  const size = fitModelScale('cruiseShip', model)
+  const bounds = new T.Box3().setFromObject(model, true)
+  const waterline = bounds.getCenter(new T.Vector3())
+  waterline.y = bounds.min.y + size.height * 0.25
+  model.position.sub(waterline)
+  return size
 }
 
 export function lighthouse() {

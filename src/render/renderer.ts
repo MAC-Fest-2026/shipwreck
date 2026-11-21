@@ -4,12 +4,12 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 import { BloomEffect, EffectComposer, EffectPass, RenderPass, VignetteEffect } from 'postprocessing'
 import { tuning } from '../app/tuning'
 import { clamp, damp, lerp, seededRandom } from '../core/math'
-import type { Session } from '../game/session'
+import { timelines, type Session } from '../game/session'
 import { boatLungePosition, boatLungeTiming } from '../sim/boat'
 import { roster } from '../sim/rescue'
 import { waveHeight } from '../sim/water'
 import { beam, environment, placeBeam } from './environment'
-import { claw, cockpit, dock, fitModelScale, hazard, HelicopterModel, light, lighthouse, MODEL_SCALES, person, raft,
+import { claw, cockpit, dock, fitModelScale, hazard, HelicopterModel, light, lighthouse, MODEL_SCALES, person, prepareCruiseWreck, raft,
   rescueVessel, SharkModel, wreck, type ScaledModel } from './models'
 
 export type Quality = 'low' | 'medium' | 'high'
@@ -20,6 +20,8 @@ const cyan = new T.Color('#73e6d5')
 const danger = new T.Color('#ff664c')
 const { smoothstep } = T.MathUtils
 const bootClearance = 0.02
+const wreckX = -42
+const wreckZ = -52
 // Authored GLB coordinates. The bow points along +X.
 const wheelhouseEye = new T.Vector3(6.52, 3.72, 0)
 // Replace the exterior window assembly with slimmer pillars for the interior view.
@@ -60,7 +62,7 @@ export class GameRenderer {
   private readonly helo = new HelicopterModel()
   private readonly picker = claw()
   private readonly raft = raft()
-  private readonly ship = wreck()
+  private readonly ship = new T.Group()
   private readonly rescueBoat = rescueVessel()
   private vesselHelm: T.Vector3 | null = null
   private readonly driverHiddenParts: T.Object3D[] = []
@@ -109,10 +111,12 @@ export class GameRenderer {
   get stats() { return { fps: this.fps, calls: this.renderer.info.render.calls, triangles: this.renderer.info.render.triangles, scale: this.scale } }
 
   constructor(container: HTMLElement, onContext: (lost: boolean) => void) {
+    const fallbackShip = wreck()
+    this.ship.add(fallbackShip)
     this.modelSizes = {
       rescueVessel: fitModelScale('rescueVessel', this.rescueBoat),
       helicopter: this.helo.fallbackSize,
-      cruiseShip: fitModelScale('cruiseShip', this.ship),
+      cruiseShip: fitModelScale('cruiseShip', fallbackShip),
       island: fitModelScale('island', this.island),
       rocks: fitModelScale('rocks', hazard('reef', MODEL_SCALES.rocks.referenceRadius)),
     }
@@ -143,7 +147,6 @@ export class GameRenderer {
     this.camera.add(this.cabin.root)
     this.rescueGroup.add(this.helo.root, this.picker.root, this.raft.root, this.ship, this.rescueBoat, this.rope,
       this.marker, this.schoolBuoy, ...this.people.map(p => p.root), ...this.peopleMarkers, ...this.sharks.map(s => s.root))
-    this.ship.position.set(-42, -0.7, -22)
     this.raft.root.position.x = -32
     this.rescueBoat.position.x = R.deploy
     this.rope.geometry.setAttribute('position', new T.BufferAttribute(new Float32Array(21), 3))
@@ -196,6 +199,10 @@ export class GameRenderer {
       loader.loadAsync(path + 'sar-helicopter.glb').then(({ scene, animations }) => {
         this.modelSizes.helicopter = this.helo.setAsset(scene, animations)
       }).catch((error: unknown) => console.warn('[models] Could not load sar-helicopter.glb.', error)),
+      loader.loadAsync(path + 'cruise_ship_wreck.glb').then(({ scene }) => {
+        this.modelSizes.cruiseShip = prepareCruiseWreck(scene)
+        this.ship.clear().add(scene)
+      }).catch((error: unknown) => console.warn('[models] Could not load cruise_ship_wreck.glb.', error)),
       loader.loadAsync(path + 'rescue-vessel.glb').then(({ scene }) => {
         this.modelSizes.rescueVessel = fitModelScale('rescueVessel', scene)
         // The GLB's recovery deck is aft of its origin. Align it to the existing drop zone at full scale.
@@ -296,7 +303,9 @@ export class GameRenderer {
     this.helo.animateRotors(animationDt)
     if (isRescue) this.sharks.forEach(shark => shark.animate(animationDt))
     this.meg.animate(animationDt)
-    const weight = firstPerson || !this.initialized || newPhase && (arrival || run.phase === 'rescue') ? 1 : 1 - Math.exp(-dt * 3.6)
+    const opening = run.phase === 'intro'
+    const weight = firstPerson || !this.initialized || newPhase && (opening || arrival || run.phase === 'rescue')
+      ? 1 : 1 - Math.exp(-dt * 3.6)
     this.camera.position.lerp(this.eye, weight)
     this.scratch.lerp(this.point, weight)
     this.camera.up.set(0, 1, 0)
@@ -352,15 +361,16 @@ export class GameRenderer {
     let fov = 44
     this.eye.set(viewX + 12, 23.7, 65 + spread)
     this.point.set(viewX, 11.8, -0.5)
+    const sink = inIntro ? smoothstep(run.elapsed, 0, timelines.intro.duration) : 1
+    this.ship.position.set(wreckX, lerp(0.6, -7, sink) + waveHeight(wreckX, wreckZ, t) * 0.22, wreckZ)
+    this.ship.rotation.set(lerp(0.42, 0.77, sink), -0.11, lerp(-0.04, -0.12, sink), 'YXZ')
     if (inIntro) {
-      this.eye.set(-31 + Math.sin(run.elapsed * 0.14) * 17, 11 + run.elapsed * 0.42, 36 + run.elapsed * 0.66)
-      this.point.set(-38, 7.0, -7)
+      this.eye.set(lerp(-58, -25, sink), lerp(27, 21, sink), lerp(88, 70, sink) + spread)
+      this.point.set(lerp(-44, -37, sink), lerp(10, 7, sink), -27)
+      fov = 46
       this.meg.root.visible = run.elapsed > 7
       this.meg.root.position.set(-73 + run.elapsed * 2.4, -2.35, 14)
       this.meg.root.rotation.set(0, Math.PI / 2, -0.02, 'YXZ')
-      const split = clamp(run.elapsed / 7)
-      this.ship.children[0].rotation.z = lerp(-0.06, -0.25, split)
-      this.ship.children[1].rotation.z = lerp(0.04, 0.33, split)
     } else if (inArrival) {
       this.eye.set(-18 + run.elapsed * 1.1, 16 + run.elapsed * 0.75, 50)
       this.point.set(-27 + run.elapsed * 2, 12, -3)
