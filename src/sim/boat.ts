@@ -225,6 +225,7 @@ function coastalRocks() {
 
 const reefBends = [
   [350, 0], [397, 14], [441, 14], [510, -15], [548, -15], [610, 0],
+  [648, 8.5], [674, 8.5], [725, -8.5], [750, -8.5],
   [780, 0], [816, 12], [847, 12], [887, 0],
 ] as const
 const laneHalfWidth = 6.5
@@ -280,12 +281,11 @@ function makeReefs(seed: number) {
   const length = (min: number, max: number) => reefScales.rocks.targetLength * lerp(min, max, rng())
   const bendSide = rng() < 0.5 ? -1 : 1
   const rocks: ReefHazard[] = []
-  // Preserve the scale draws for every existing piece. These stations only change the layout.
   const clusters = [
     [362, 4, -28], [407, 3, -3.2], [461, 2, 20], [492, 4, -26], [537, 4, 3.5],
     [578, 3, 21], [793, 4, 27], [831, 3, -4.6], [867, 4, 24],
-  ]
-  const formations = clusters.map(([station, count, lateral]) => {
+  ] as const
+  const makeFormation = ([station, count, lateral]: readonly [number, number, number]) => {
     const side = Math.sign(lateral) * bendSide
     const lead = rockAt(boulder(), bendSide * lateral + side * lerp(-1.9, 2.6, rng()),
       station + lerp(-4, 4, rng()), length(1.65, 2.17), yaw())
@@ -300,10 +300,12 @@ function makeReefs(seed: number) {
       pieces.push(next)
     }
     return { pieces, side, ahead }
-  })
+  }
+  const formations = clusters.map(makeFormation)
   const additionalRocks = [
     { station: 384, lateral: -14 }, { formation: 2, accent: true }, { formation: 4, accent: false },
     { station: 563, lateral: -12 }, { formation: 7, accent: true }, { station: 851, lateral: -18 },
+    { station: 642, lateral: -26 }, { station: 711, lateral: 24 }, { station: 767, lateral: -22 },
   ] as const
   for (const placement of additionalRocks) {
     const small = 'accent' in placement && placement.accent
@@ -324,6 +326,9 @@ function makeReefs(seed: number) {
     joinRocks(small ? pieces[1] : pieces[0], rock, side * Math.cos(angle), ahead * Math.sin(angle), small ? .56 : .24)
     pieces.push(rock)
   }
+  // Add the swell formations after the original placements to preserve their seeded sizes and angles.
+  const lateClusters = [[620, 3, 24], [665, 2, -2.8], [741, 3, 2.4]] as const
+  formations.push(...lateClusters.map(makeFormation))
   for (const { pieces, side } of formations) {
     keepLaneClear(pieces, side, bendSide)
     rocks.push(...pieces)

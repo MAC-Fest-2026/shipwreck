@@ -6,6 +6,7 @@ import { waveHeight } from './water'
 
 const R = tuning.rescue
 const S = tuning.shark
+const boardCapacity = 3
 
 // An age of zero is the top of the visible board-break breach.
 export function boardBreachHeight(age: number) {
@@ -20,11 +21,11 @@ export const roster = [
   { id: 'mara', name: 'Mara Voss', x: -35.4, z: 0, skin: '#c59374' },
   { id: 'elias', name: 'Elias Rook', x: -34, z: -0.6, skin: '#d3ae94' },
   { id: 'dev', name: 'Dev Kapoor', x: -30.8, z: 0.4, skin: '#ac7b5b' },
-  { id: 'ana', name: 'Ana Kapoor', x: -29.5, z: -0.35, skin: '#be8d69' },
-  { id: 'priya', name: 'Priya Nair', x: -28.2, z: 0.15, skin: '#956848' },
-  { id: 'jay', name: 'Jay Okafor', x: -27.65, z: 1.05, skin: '#79563e' },
-  { id: 'tommy', name: 'Tommy Ricci', x: -31.2, z: -1.15, skin: '#dbad91' },
-  { id: 'hollis', name: 'Hollis Brandt', x: -29.25, z: 1.1, skin: '#bc9172' },
+  { id: 'ana', name: 'Ana Kapoor', x: -33.1, z: -3.45, skin: '#be8d69' },
+  { id: 'priya', name: 'Priya Nair', x: -28.2, z: -3.15, skin: '#956848' },
+  { id: 'jay', name: 'Jay Okafor', x: -27.65, z: 3.25, skin: '#79563e' },
+  { id: 'tommy', name: 'Tommy Ricci', x: -31.2, z: 3.55, skin: '#dbad91' },
+  { id: 'hollis', name: 'Hollis Brandt', x: -29.25, z: 4.1, skin: '#bc9172' },
 ] as const
 export const maxSurvivors = roster.length
 export const normalizeSurvivorCount = (value: unknown) =>
@@ -73,7 +74,8 @@ export class Rescue {
     this.survivors = practice
       ? [{ id: 'buoy', name: 'Training buoy', skin: '#f2914f', x: 0, z: 0, state: 'floating', targeted: false,
           lastTarget: -Infinity, fallY: 0, fallSpeed: 0 }]
-      : roster.slice(0, normalizeSurvivorCount(count)).map(entry => ({ ...entry, state: 'debris',
+      : roster.slice(0, normalizeSurvivorCount(count)).map((entry, i) => ({
+          ...entry, state: i < boardCapacity ? 'debris' : 'floating',
           targeted: false, lastTarget: -Infinity, fallY: 0, fallSpeed: 0 }))
   }
 

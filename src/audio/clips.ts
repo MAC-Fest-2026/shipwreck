@@ -1,5 +1,22 @@
 const base = import.meta.env.BASE_URL
 
+export type DialogueEmotion = 'steady' | 'hope' | 'urgent' | 'panic' | 'relief' | 'grief'
+
+const deliveries = {
+  steady: { rate: 1, presence: 0 },
+  hope: { rate: 1.018, presence: 0.45 },
+  urgent: { rate: 1.05, presence: 1.55 },
+  panic: { rate: 1.085, presence: 2.5 },
+  relief: { rate: 0.958, presence: -0.85 },
+  grief: { rate: 0.965, presence: -0.65 },
+} satisfies Record<DialogueEmotion, { rate: number; presence: number }>
+
+export function dialogueDelivery(emotion: DialogueEmotion = 'steady', overRadio = false) {
+  const { rate, presence } = deliveries[emotion] ?? deliveries.steady
+  const range = overRadio ? 0.44 : 1
+  return { rate: 1 + (rate - 1) * range, presence: presence * range }
+}
+
 export class AudioClips {
   private readonly files = new Map<string, Promise<AudioBuffer | null>>()
   private readonly overrides = new Map<string, Promise<AudioBuffer | null>>()

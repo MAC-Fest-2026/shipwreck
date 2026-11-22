@@ -41,6 +41,6 @@ Put `.glb` files under `public/models/`. The loader in `src/render/renderer.ts` 
 - Make visual and asset changes only. Never change gameplay logic, scoring, webcam gestures, or keyboard/mouse controls. If a visual change seems to require a gameplay change, stop and ask the user.
 - Do one task per message. List changed files and give test steps for both control modes.
 - Never modify or re-export `public/models/rescue-vessel.glb`.
-- Keep raw or large source models outside the repo in `C:\Projects\shipwreck-raw\`. Keep finished models under 10 MB each in `public/models/`. Never commit a file over 20 MB.
+- Keep raw or large source models outside the repo in `C:\Projects\shipwreck-raw\`. Finished models in `public/models/` may be up to 20 MB each. Never commit a file over 50 MB.
 - Use `MODEL_SCALES` in `src/render/models.ts` for all visual model scaling.
 - Never commit `.env` files, API keys, or the `shipwreck-raw` folder.

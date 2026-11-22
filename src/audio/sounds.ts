@@ -1,4 +1,4 @@
-import { seededRandom } from '../core/math'
+import { clamp, lerp, seededRandom } from '../core/math'
 import { bufferTo, gainTo, type AudioClips } from './clips'
 
 type SetPitch = (rate: number, time: number) => void
@@ -95,6 +95,14 @@ export function loopMusic(audio: AudioContext, output: AudioNode) {
   }
 }
 
+const boatIdleRate = 0.70
+const boatFullRate = 1.46
+
+export function boatEngineMix(throttle: number, speed: number) {
+  const load = clamp(throttle * 0.86 + speed * 0.14)
+  return { volume: 0.056 + 0.323 * load ** 1.13, rate: lerp(boatIdleRate, boatFullRate, load) }
+}
+
 export function loopEngine(audio: AudioContext, output: AudioNode, noise: AudioBuffer, helicopter: boolean): SetPitch {
   const pulse = gainTo(audio, output, 0.61)
   const rumble = audio.createBiquadFilter()
@@ -102,7 +110,7 @@ export function loopEngine(audio: AudioContext, output: AudioNode, noise: AudioB
   rumble.frequency.value = helicopter ? 222 : 168
   rumble.Q.value = 0.4
   rumble.connect(pulse)
-  const fundamental = helicopter ? 42 : 33
+  const fundamental = helicopter ? 42 : 38
   const bladeRate = helicopter ? 7.4 : 10.2
   const motor = audio.createOscillator()
   motor.type = helicopter ? 'triangle' : 'sawtooth'
@@ -114,7 +122,8 @@ export function loopEngine(audio: AudioContext, output: AudioNode, noise: AudioB
   harmonic.frequency.value = fundamental * 2
   harmonic.connect(gainTo(audio, rumble, 0.23))
   harmonic.start()
-  const wash = bufferTo(audio, gainTo(audio, rumble, 0.34), noise)
+  const washGain = gainTo(audio, rumble, 0.34)
+  const wash = bufferTo(audio, washGain, noise)
   wash.loop = true
   wash.start()
   const blades = audio.createOscillator()
@@ -129,6 +138,11 @@ export function loopEngine(audio: AudioContext, output: AudioNode, noise: AudioB
     harmonic.frequency.setTargetAtTime(2 * fundamental * rate, time, 0.17)
     blades.frequency.setTargetAtTime(bladeRate * rate, time, 0.17)
     wash.playbackRate.setTargetAtTime(rate, time, 0.17)
+    if (!helicopter) {
+      const load = clamp((rate - boatIdleRate) / (boatFullRate - boatIdleRate))
+      rumble.frequency.setTargetAtTime(lerp(148, 460, load), time, 0.19)
+      washGain.gain.setTargetAtTime(lerp(0.22, 0.53, load), time, 0.19)
+    }
   }
 }
 
@@ -189,32 +203,89 @@ export const effects = {
 
 export type EffectSlot = keyof typeof effects
 
+export function voiceFilter(audio: AudioContext, type: BiquadFilterType, frequency: number, gain = 0, q = 0.707) {
+  const filter = audio.createBiquadFilter()
+  filter.type = type
+  filter.frequency.value = frequency
+  filter.gain.value = gain
+  filter.Q.value = q
+  return filter
+}
+
+export function earlyReflections(audio: AudioContext, input: AudioNode, output: AudioNode, cutoff: number,
+  taps: readonly (readonly [delay: number, level: number, pan: number])[]) {
+  const damped = voiceFilter(audio, 'lowpass', cutoff)
+  input.connect(damped)
+  for (const [time, level, side] of taps) {
+    const delay = audio.createDelay(0.12)
+    delay.delayTime.value = time
+    const pan = audio.createStereoPanner()
+    pan.pan.value = side
+    damped.connect(delay).connect(pan).connect(gainTo(audio, output, level))
+  }
+}
+
+export function survivorChannel(audio: AudioContext, output: AudioNode, aboard: boolean) {
+  const input = voiceFilter(audio, 'highpass', aboard ? 95 : 168)
+  const body = voiceFilter(audio, 'peaking', 405, aboard ? 1.8 : -1.35, 0.87)
+  const air = voiceFilter(audio, 'lowpass', aboard ? 9300 : 5400)
+  const level = gainTo(audio, output, aboard ? 1 : 0.86)
+  input.connect(body).connect(air).connect(level)
+  if (aboard) earlyReflections(audio, air, level, 3200, [[0.015, 0.058, -0.16], [0.031, 0.032, 0.22]])
+  else earlyReflections(audio, air, level, 2450, [[0.038, 0.074, -0.38], [0.067, 0.042, 0.44]])
+  return input
+}
+
+export function voiceTake(audio: AudioContext, output: AudioNode, presence: number, side: number, volume: number) {
+  const input = voiceFilter(audio, 'peaking', 2180, presence, 0.82)
+  const pan = audio.createStereoPanner()
+  pan.pan.value = side
+  const level = gainTo(audio, output, volume)
+  input.connect(pan).connect(level)
+  return {
+    input,
+    disconnect() {
+      input.disconnect()
+      pan.disconnect()
+      level.disconnect()
+    },
+  }
+}
+
 export const radioSlots = ['radio-squelch-open', 'radio-squelch-close', 'radio-static'] as const
-export const radioLeadIn = 0.09
-export const radioTail = 0.125
+export const radioLeadIn = 0.06
+export const radioTail = 0.115
 
 export function radioTransmission(audio: AudioContext, channel: AudioNode, noise: AudioBuffer,
   [opening, closing, staticClip]: readonly (AudioBuffer | null)[]) {
   const gate = gainTo(audio, channel, 1)
   const time = audio.currentTime
-  const hiss = gainTo(audio, gate, staticClip ? 0.025 : 0.034)
-  const carrier = bufferTo(audio, hiss, staticClip ?? noise)
+  const hiss = gainTo(audio, gate, 0)
+  const carrierFilter = voiceFilter(audio, 'lowpass', 2000)
+  carrierFilter.connect(hiss)
+  const carrier = bufferTo(audio, carrierFilter, staticClip ?? noise)
   carrier.loop = true
-  carrier.start(time + radioLeadIn)
+  carrier.addEventListener('ended', () => { carrierFilter.disconnect(); hiss.disconnect() }, { once: true })
+  const speechAt = time + radioLeadIn
+  hiss.gain.setValueAtTime(0, speechAt)
+  hiss.gain.linearRampToValueAtTime(staticClip ? 0.017 : 0.021, speechAt + 0.018)
+  carrier.start(speechAt)
   let finished = false
 
   function squelch(buffer: AudioBuffer | null, t: number, opening: boolean) {
     if (buffer) {
       const duration = Math.min(buffer.duration, opening ? radioLeadIn : radioTail)
-      const envelope = gainTo(audio, gate, 0.28)
-      envelope.gain.setValueAtTime(0.28, t + duration * 0.72)
+      const envelope = gainTo(audio, gate, 0)
+      envelope.gain.setValueAtTime(0, t)
+      envelope.gain.linearRampToValueAtTime(0.22, t + duration * 0.12)
+      envelope.gain.setValueAtTime(0.22, t + duration * 0.74)
       envelope.gain.linearRampToValueAtTime(0, t + duration)
       const source = bufferTo(audio, envelope, buffer)
       source.start(t, 0, duration)
       source.addEventListener('ended', () => envelope.disconnect(), { once: true })
     } else {
-      sweep(audio, gate, t, opening ? 2200 : 1680, opening ? 940 : 710, 0.023, 0.29, 'triangle')
-      noiseBurst(audio, gate, noise, t + 0.004, opening ? 0.061 : 0.096, opening ? 2440 : 1920, 0.33)
+      sweep(audio, gate, t, opening ? 1420 : 1060, opening ? 760 : 570, 0.022, opening ? 0.21 : 0.15)
+      noiseBurst(audio, gate, noise, t, 0.016, opening ? 1850 : 1310, 0.14)
     }
   }
 
