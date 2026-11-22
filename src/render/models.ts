@@ -2,12 +2,12 @@ import * as T from 'three'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import { clone as cloneSkeleton } from 'three/addons/utils/SkeletonUtils.js'
 import { clamp, damp, seededRandom } from '../core/math'
-import { reefScales, rockProfiles, type FloatingHazard, type ReefHazard, type RockVariant } from '../sim/boat'
+import { boatSharkLength, reefScales, rockProfiles, type FloatingHazard, type ReefHazard, type RockVariant } from '../sim/boat'
 
 // Visual lengths in scene units. Survivors, the wooden board, and the rescue deck are fixed references.
 export const MODEL_SCALES = {
   regularShark: { label: 'Regular shark', targetLength: 6.2 },
-  megalodon: { label: 'Megalodon', targetLength: 21.39 },
+  megalodon: { label: 'Megalodon', targetLength: boatSharkLength },
   rescueVessel: { label: 'Rescue vessel', scale: 1, deckAnchor: [-1.95, 1.548, 0] },
   helicopter: { label: 'Helicopter', targetLength: 14.2 },
   cruiseShip: { label: 'Cruise ship', targetLength: 145 },
@@ -500,13 +500,12 @@ export function instanceRocks(asset: ReturnType<typeof prepareRockSet>, rocks: r
   const pose = new T.Object3D()
   return Array.from(batches, ([name, placements]) => {
     const { source, size } = asset.variants.get(name)!
-    const [pitch, roll, sink] = rockProfiles[name]
     const batch = new T.InstancedMesh(source.geometry, source.material, placements.length)
     batch.name = name
-    pose.rotation.set(T.MathUtils.degToRad(pitch), 0, T.MathUtils.degToRad(roll), 'YXZ')
     placements.forEach((rock, index) => {
+      const [pitch, roll, sink] = rock.profile
       pose.position.set(rock.x, -sink * rock.length, -rock.z)
-      pose.rotation.y = rock.yaw
+      pose.rotation.set(T.MathUtils.degToRad(pitch), rock.yaw, T.MathUtils.degToRad(roll), 'YXZ')
       pose.scale.setScalar(size.scale * rock.length / MODEL_SCALES.rocks.targetLength)
       pose.updateMatrix()
       batch.setMatrixAt(index, pose.matrix)

@@ -1,6 +1,21 @@
 import * as T from 'three'
 import { seededRandom } from '../core/math'
+import { boatLungeTiming } from '../sim/boat'
 import { waterGlsl, waveAmplitude, waveHeight } from '../sim/water'
+
+function lungeElevation(age: number) {
+  const { bite, strike, clear, end } = boatLungeTiming
+  const { smoothstep } = T.MathUtils
+  return -1.05 + 1.4 * (smoothstep(age, bite, strike) - smoothstep(age, strike, clear))
+    - 7.2 * smoothstep(age, clear, end)
+}
+
+export function boatSharkWaterline(x: number, z: number, time: number, age: number, vx: number, vz: number) {
+  const delta = 0.01
+  const up = waveHeight(x + vx * delta, z + vz * delta, time + delta) + lungeElevation(age + delta)
+  const down = waveHeight(x - vx * delta, z - vz * delta, time - delta) + lungeElevation(age - delta)
+  return { height: waveHeight(x, z, time) + lungeElevation(age), verticalSpeed: (up - down) / (2 * delta) }
+}
 
 const noise = `
 float rand2(vec2 p) { return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453); }

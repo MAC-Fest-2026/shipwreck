@@ -8,7 +8,7 @@ import { timelines, type Session } from '../game/session'
 import { boatLungePosition, boatLungeTiming, islandCrown, type FloatingHazard } from '../sim/boat'
 import { roster } from '../sim/rescue'
 import { waterGlsl, waveHeight } from '../sim/water'
-import { beam, environment, placeBeam, wreckAtmosphere } from './environment'
+import { beam, boatSharkWaterline, environment, placeBeam, wreckAtmosphere } from './environment'
 import { claw, cockpit, dock, fitModelScale, hazard, HelicopterModel, instanceRocks, light, lighthouse, MODEL_SCALES, person,
   prepareCruiseWreck, prepareRockSet, raft, rescueVessel, SharkModel, wreck, type ScaledModel } from './models'
 
@@ -39,12 +39,6 @@ const wheelhouseOccluders = new Set([
 function boardBreachHeight(age: number) {
   return -1.5 - 6.1 * smoothstep(age, -2.2, -1.25)
     + 14.5 * smoothstep(age, -1.25, 0) - 14.9 * smoothstep(age, 0, 2.25)
-}
-
-function boatLungeHeight(age: number) {
-  const { bite, strike, clear, end } = boatLungeTiming
-  return -1.05 + 1.4 * (smoothstep(age, bite, strike) - smoothstep(age, strike, clear))
-    - 7.2 * smoothstep(age, clear, end)
 }
 
 function ring(radius: number, color: string) {
@@ -815,15 +809,15 @@ export class GameRenderer {
     if (active) {
       const age = t - active.time
       const snout = boatLungePosition(active, age)
-      const speed = Math.hypot(active.vx, active.vz)
+      const speed = Math.hypot(snout.vx, snout.vz)
       // The model's origin is behind the snout. Align its head with the collision path.
       const snoutOffset = MODEL_SCALES.megalodon.targetLength * 0.44
-      const x = snout.x - active.vx / speed * snoutOffset
-      const z = -snout.z + active.vz / speed * snoutOffset
-      const rise = (boatLungeHeight(age + 0.01) - boatLungeHeight(age - 0.01)) / 0.02
+      const x = snout.x - snout.vx / speed * snoutOffset
+      const z = -snout.z + snout.vz / speed * snoutOffset
+      const { height, verticalSpeed } = boatSharkWaterline(x, z, t, age, snout.vx, -snout.vz)
       this.meg.root.visible = true
-      this.meg.root.position.set(x, waveHeight(x, z, t) + boatLungeHeight(age), z)
-      this.meg.root.rotation.set(-Math.atan2(rise, speed), Math.atan2(active.vx, -active.vz), 0, 'YXZ')
+      this.meg.root.position.set(x, height, z)
+      this.meg.root.rotation.set(-Math.atan2(verticalSpeed, speed), Math.atan2(snout.vx, -snout.vz), 0, 'YXZ')
       this.meg.swimSpeed = lerp(1.5, 2, smoothstep(age, 1, boatLungeTiming.bite))
       if (age >= boatLungeTiming.bite && age <= boatLungeTiming.clear
         && !this.animatedAttacks.has(active) && this.meg.bite(0, 1.75)) this.animatedAttacks.add(active)

@@ -3,7 +3,7 @@ import { neutralIntent } from '../src/input/intent'
 import { pilotBot, replay, defaultAssists } from '../src/game/replay'
 import { scoreRun } from '../src/game/score'
 import { Session } from '../src/game/session'
-import { Boat, reefContact, rockProfiles, type ReefHazard } from '../src/sim/boat'
+import { Boat, boatLungePosition, boatLungeTiming, boatSharkLength, planBoatLunge, reefContact, rockProfiles, type ReefHazard } from '../src/sim/boat'
 import { Rescue } from '../src/sim/rescue'
 import { tuning } from '../src/app/tuning'
 import { toCsv } from '../src/persistence/scores'
@@ -64,22 +64,58 @@ describe('complete run', () => {
 })
 
 describe('ocean rocks', () => {
-  it('places each variant once or more with a clear central lane', () => {
+  it('keeps all variants, attaches the small stones and leaves a winding lane', () => {
     for (const seed of [1, 2, 81, tuning.seed]) {
-      const rocks = new Boat(seed, () => {}).hazards.filter(h => h.type === 'reef').filter(h => !h.island)
+      const boat = new Boat(seed, () => {})
+      const rocks = boat.hazards.filter(h => h.type === 'reef').filter(h => !h.island)
+      const bodies = rocks.filter(h => !h.variant.startsWith('Stone_'))
       expect(new Set(rocks.map(h => h.variant))).toEqual(new Set(Object.keys(rockProfiles)))
       expect(new Set(rocks.map(h => `${h.x},${h.z}`)).size).toBe(rocks.length)
-      expect(Math.min(...rocks.map(h => Math.abs(h.x) - h.radius - 1.1))).toBeGreaterThan(8)
+      for (const stone of rocks.filter(h => h.variant.startsWith('Stone_'))) {
+        expect(stone.profile[2]).toBeGreaterThan(rockProfiles[stone.variant][2])
+        expect(bodies.some(body => {
+          for (let i = 1; i < 20; i++) {
+            const x = stone.x + (body.x - stone.x) * i / 20, z = stone.z + (body.z - stone.z) * i / 20
+            if (reefContact(stone, x, z, 0) && reefContact(body, x, z, 0)) return true
+          }
+          return false
+        })).toBe(true)
+      }
+      for (let z = 350; z <= 890; z += 2) {
+        const x = boat.reefRouteX(z)
+        expect(rocks.some(h => reefContact(h, x, z, 7.5))).toBe(false)
+      }
+      expect(boat.reefRouteX(408) * boat.reefRouteX(537)).toBeLessThan(0)
+      expect(rocks.some(h => !h.variant.startsWith('Stone_') && Math.abs(h.x) < 5)).toBe(true)
     }
   })
 
   it('rotates an elongated reef hitbox with the displayed rock', () => {
     const reef: ReefHazard = { type: 'reef', variant: 'Reef_04', x: 12, z: 400, length: 10,
-      radius: rockProfiles.Reef_04[3] * 10, yaw: 0, hit: false, island: false }
+      radius: rockProfiles.Reef_04[3] * 10, yaw: 0, hit: false, island: false, profile: rockProfiles.Reef_04 }
     expect(reefContact(reef, 8.4, 400, 0)).toBe(true)
     expect(reefContact(reef, 12, 403.6, 0)).toBe(false)
     reef.yaw = Math.PI / 2
     expect(reefContact(reef, 8.4, 400, 0)).toBe(false)
     expect(reefContact(reef, 12, 396.4, 0)).toBe(true)
+  })
+
+  it('avoids a reef with the whole shark even when the straight lunge would cross it', () => {
+    const profile = rockProfiles.Boulder_02
+    const rock: ReefHazard = { type: 'reef', variant: 'Boulder_02', x: -16, z: 79, radius: profile[3] * 7,
+      length: 7, yaw: .31, hit: true, island: false, profile }
+    const straight = { x: 0, targetZ: 72, vx: 8, vz: -3.5 }
+    const original = boatLungePosition(straight, 1.1)
+    expect(reefContact(rock, original.x, original.z, 0)).toBe(true)
+    const detour = planBoatLunge(straight, [rock])
+    expect(detour?.curve).toBeDefined()
+    for (let i = 0; i <= 200; i++) {
+      const { x, z, vx, vz } = boatLungePosition(detour!, i * boatLungeTiming.end / 200)
+      const speed = Math.hypot(vx, vz)
+      for (let j = 0; j <= 12; j++) {
+        const back = j * boatSharkLength / 12
+        expect(reefContact(rock, x - vx / speed * back, z - vz / speed * back, 5.4)).toBe(false)
+      }
+    }
   })
 })

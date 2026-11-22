@@ -44,6 +44,25 @@ export const rockProfiles = {
   Stone_14: [-5, 1, 0.3496, 0.5681, 0.4944, 0.4913, 0.4448, 0.4375, 0.4526, 0.4803, 0.5097, 0.559, 0.5328, 0.5057, 0.5465, 0.5508],
 } as const satisfies Record<string, RockProfile>
 export type RockVariant = keyof typeof rockProfiles
+type StoneVariant = Extract<RockVariant, `Stone_${string}`>
+
+// The same meshes and tilts measured again at the deeper submersion used for cluster bases.
+const accentProfiles = {
+  Stone_01: [-3, -2, 0.5426, 0.5666, 0.5111, 0.5623, 0.5215, 0.4201, 0.4561, 0.5178, 0.4815, 0.4263, 0.4439, 0.461, 0.4242, 0.4445],
+  Stone_02: [3, -7, 0.5685, 0.6327, 0.5959, 0.6223, 0.5417, 0.3942, 0.4478, 0.4182, 0.4338, 0.3879, 0.3726, 0.3433, 0.4185, 0.4971],
+  Stone_03: [8, 6, 0.6037, 0.6328, 0.4368, 0.5841, 0.6275, 0.5181, 0.4928, 0.5831, 0.5731, 0.5377, 0.454, 0.3872, 0.3332, 0.3276],
+  Stone_04: [-5, 1, 0.5047, 0.557, 0.4546, 0.4702, 0.4867, 0.4516, 0.4942, 0.4819, 0.4683, 0.5044, 0.5236, 0.5447, 0.5298, 0.4661],
+  Stone_05: [1, -5, 0.5562, 0.5894, 0.5099, 0.5456, 0.5223, 0.5096, 0.575, 0.5369, 0.4306, 0.5202, 0.5148, 0.4742, 0.5841, 0.5452],
+  Stone_06: [6, 8, 0.4809, 0.5694, 0.3349, 0.3861, 0.5038, 0.551, 0.5488, 0.5473, 0.4716, 0.4549, 0.4875, 0.4495, 0.4942, 0.4391],
+  Stone_07: [-7, 3, 0.6575, 0.5766, 0.3572, 0.336, 0.3787, 0.4334, 0.4249, 0.3514, 0.4257, 0.4638, 0.5181, 0.5653, 0.5463, 0.4926],
+  Stone_08: [-2, -3, 0.5916, 0.6149, 0.5307, 0.6052, 0.5784, 0.4694, 0.5087, 0.549, 0.4669, 0.4849, 0.5173, 0.5064, 0.4624, 0.4798],
+  Stone_09: [4, -8, 0.5967, 0.6065, 0.5671, 0.4984, 0.4646, 0.5286, 0.5626, 0.537, 0.4348, 0.382, 0.3619, 0.442, 0.5499, 0.5985],
+  Stone_10: [-8, 4, 0.4488, 0.5661, 0.3679, 0.2916, 0.3565, 0.4563, 0.508, 0.4615, 0.3832, 0.4804, 0.5202, 0.5558, 0.535, 0.4376],
+  Stone_11: [-3, -2, 0.6, 0.6399, 0.4989, 0.4899, 0.4767, 0.4738, 0.4727, 0.4721, 0.4517, 0.4775, 0.5033, 0.5421, 0.6294, 0.6027],
+  Stone_12: [3, -7, 0.5516, 0.5836, 0.5529, 0.5722, 0.5355, 0.481, 0.5281, 0.5211, 0.4437, 0.4264, 0.3989, 0.425, 0.4409, 0.4698],
+  Stone_13: [8, 6, 0.5592, 0.6357, 0.4366, 0.5775, 0.6328, 0.5782, 0.6011, 0.6076, 0.5605, 0.5738, 0.4977, 0.4337, 0.4172, 0.4056],
+  Stone_14: [-5, 1, 0.6645, 0.5639, 0.4534, 0.3779, 0.3291, 0.366, 0.4535, 0.4874, 0.5097, 0.542, 0.5258, 0.5279, 0.5501, 0.5382],
+} as const satisfies Record<StoneVariant, RockProfile>
 
 interface HazardPosition {
   x: number; z: number; radius: number; hit: boolean
@@ -57,6 +76,7 @@ export interface ReefHazard extends HazardPosition {
   length: number
   yaw: number
   island: boolean
+  profile: RockProfile
 }
 export type Hazard = FloatingHazard | ReefHazard
 
@@ -71,12 +91,12 @@ export function reefContact(rock: ReefHazard, x: number, z: number, padding = bo
   const localX = (dx * cos + dz * sin) / rock.length
   const localZ = (dx * sin - dz * cos) / rock.length
   const margin = padding / rock.length
-  const profile = rockProfiles[rock.variant]
-  return contactNormals.every(([nx, nz], i) => localX * nx + localZ * nz <= profile[i + 4] + margin)
+  return contactNormals.every(([nx, nz], i) => localX * nx + localZ * nz <= rock.profile[i + 4] + margin)
 }
 
 function rockAt(variant: RockVariant, x: number, z: number, length: number, yaw: number, island = false): ReefHazard {
-  return { type: 'reef', x, z, radius: rockProfiles[variant][3] * length, hit: false, variant, length, yaw, island }
+  const profile = !island && variant.startsWith('Stone_') ? accentProfiles[variant as StoneVariant] : rockProfiles[variant]
+  return { type: 'reef', x, z, radius: profile[3] * length, hit: false, variant, length, yaw, island, profile }
 }
 
 function cycleVariants(prefix: string, rng: () => number) {
@@ -100,6 +120,54 @@ const islandRocks = [
   [-42, 8, 15, 'Stone_04'], [19, 34, 22, 'Reef_01'],
 ] as const satisfies readonly (readonly [number, number, number, RockVariant])[]
 
+const reefBends = [
+  [350, 0], [397, 14], [441, 14], [510, -15], [548, -15], [610, 0],
+  [780, 0], [816, 12], [847, 12], [887, 0],
+] as const
+const laneHalfWidth = 6.5
+
+function reefRouteX(z: number, side: number) {
+  for (let i = 1; i < reefBends.length; i++) {
+    const [endZ, endX] = reefBends[i]
+    if (z > endZ) continue
+    const [startZ, startX] = reefBends[i - 1]
+    const t = clamp((z - startZ) / (endZ - startZ))
+    return side * lerp(startX, endX, t * t * (3 - 2 * t))
+  }
+  return 0
+}
+
+function rockEdge(rock: ReefHazard, dx: number, dz: number) {
+  const cos = Math.cos(rock.yaw), sin = Math.sin(rock.yaw)
+  const x = dx * cos + dz * sin, z = dx * sin - dz * cos
+  let edge = Infinity
+  for (let i = 0; i < contactNormals.length; i++) {
+    const [nx, nz] = contactNormals[i]
+    const facing = x * nx + z * nz
+    if (facing > 0) edge = Math.min(edge, rock.profile[i + 4] / facing)
+  }
+  return edge * rock.length
+}
+
+function joinRocks(anchor: ReefHazard, rock: ReefHazard, dx: number, dz: number, overlap: number) {
+  const near = rockEdge(rock, -dx, -dz)
+  const spacing = rockEdge(anchor, dx, dz) + near * (1 - overlap)
+  rock.x = anchor.x + dx * spacing
+  rock.z = anchor.z + dz * spacing
+}
+
+function keepLaneClear(formation: readonly ReefHazard[], side: number, bendSide: number) {
+  let shift = 0
+  for (const rock of formation) {
+    const reach = rock.radius + (boatClearance + laneHalfWidth) * contactMarginScale
+    const low = rock.z - reach, high = rock.z + reach
+    let lane = Math.max(reefRouteX(low, bendSide) * side, reefRouteX(high, bendSide) * side)
+    for (const [z, x] of reefBends) if (z > low && z < high) lane = Math.max(lane, x * bendSide * side)
+    shift = Math.max(shift, lane + reach - side * rock.x)
+  }
+  for (const rock of formation) rock.x += side * shift
+}
+
 function makeReefs(seed: number) {
   const rng = seededRandom(seed ^ 0x482a561b)
   const yaw = () => rng() * 2 * Math.PI
@@ -107,54 +175,169 @@ function makeReefs(seed: number) {
   const reef = cycleVariants('Reef', rng)
   const stone = cycleVariants('Stone', rng)
   const length = (min: number, max: number) => reefScales.rocks.targetLength * lerp(min, max, rng())
-  const sideStart = rng() < 0.5 ? -1 : 1
-  // Alternate the banks and reserve room even where the solo rocks project into the channel.
+  const bendSide = rng() < 0.5 ? -1 : 1
   const rocks: ReefHazard[] = []
-  const clusters = [[365, 4], [405, 3], [455, 2], [492, 4], [532, 4], [574, 3], [787, 4], [827, 3], [869, 4]]
-  clusters.forEach(([station, count], i) => {
-    const side = i % 2 === 0 ? sideStart : -sideStart
-    const lead = rockAt(boulder(), side * lerp(29.5, 33.5, rng()), station + lerp(-3, 3, rng()), length(1.65, 2.17), yaw())
-    rocks.push(lead)
+  // Preserve the scale draws for every existing piece. These stations only change the layout.
+  const clusters = [
+    [362, 4, -28], [407, 3, -3.2], [461, 2, 20], [492, 4, -26], [537, 4, 3.5],
+    [578, 3, 21], [793, 4, 27], [831, 3, -4.6], [867, 4, 24],
+  ]
+  const formations = clusters.map(([station, count, lateral]) => {
+    const side = Math.sign(lateral) * bendSide
+    const lead = rockAt(boulder(), bendSide * lateral + side * lerp(-1.9, 2.6, rng()),
+      station + lerp(-4, 4, rng()), length(1.65, 2.17), yaw())
+    const pieces = [lead]
     const ahead = rng() < .5 ? -1 : 1
     for (let j = 1; j < count; j++) {
-      const next = rockAt(j === 1 ? reef() : stone(), lead.x, lead.z,
+      const next = rockAt(j === 1 ? reef() : stone(), 0, 0,
         j === 1 ? length(.95, 1.37) : length(.35, .55), yaw())
-      const angle = j === 1 ? lerp(.88, 1.33, rng()) : j === 2 ? lerp(-1.29, -.83, rng()) : lerp(2.8, 3.32, rng())
-      const offset = (lead.radius + next.radius) * lerp(.95, 1.09, rng())
-      next.x += side * Math.cos(angle) * offset
-      next.z += ahead * Math.sin(angle) * offset
-      rocks.push(next)
+      const angle = j === 1 ? lerp(.91, 1.49, rng()) : j === 2 ? lerp(-1.32, -.79, rng()) : lerp(2.83, 3.37, rng())
+      const overlap = j === 1 ? lerp(.06, .20, rng()) : lerp(.42, .67, rng())
+      joinRocks(j === 3 ? pieces[1] : lead, next, side * Math.cos(angle), ahead * Math.sin(angle), overlap)
+      pieces.push(next)
     }
+    return { pieces, side, ahead }
   })
-  const solos = [382, 472, 517, 595, 810, 852]
-  solos.forEach((station, i) => {
-    const side = i % 2 === 0 ? -sideStart : sideStart
-    const small = i % 3 === 1
-    const rock = rockAt(small ? stone() : boulder(), 0, station + lerp(-4, 4, rng()),
+  const additionalRocks = [
+    { station: 384, lateral: -14 }, { formation: 2, accent: true }, { formation: 4, accent: false },
+    { station: 563, lateral: -12 }, { formation: 7, accent: true }, { station: 851, lateral: -18 },
+  ] as const
+  for (const placement of additionalRocks) {
+    const small = 'accent' in placement && placement.accent
+    const drift = lerp(-4, 4, rng())
+    const rock = rockAt(small ? stone() : boulder(), 0, 0,
       small ? length(.36, .5) : length(.64, .94), yaw())
-    rock.x = side * (8.6 + boatClearance + rock.radius + rng() * 2.2)
-    rocks.push(rock)
-  })
+    const variation = rng()
+    if ('station' in placement) {
+      const { station, lateral } = placement
+      rock.z = station + drift
+      rock.x = bendSide * lateral + Math.sign(lateral) * bendSide * lerp(-2, 3, variation)
+      keepLaneClear([rock], Math.sign(lateral) * bendSide, bendSide)
+      rocks.push(rock)
+      continue
+    }
+    const { pieces, side, ahead } = formations[placement.formation]
+    const angle = drift * 0.035 + (small ? 2.55 : -.89) + variation * .24
+    joinRocks(small ? pieces[1] : pieces[0], rock, side * Math.cos(angle), ahead * Math.sin(angle), small ? .56 : .24)
+    pieces.push(rock)
+  }
+  for (const { pieces, side } of formations) {
+    keepLaneClear(pieces, side, bendSide)
+    rocks.push(...pieces)
+  }
   const islandRng = seededRandom(81)
   const islandScale = reefScales.island.targetLength / 100
   for (const [x, z, size, variant] of islandRocks) {
     rocks.push(rockAt(variant, 31 + x * islandScale, 950 + z * islandScale,
       size * islandScale, islandRng() * 2 * Math.PI, true))
   }
-  return rocks
+  return { rocks, bendSide }
 }
 
 interface BoatLunge {
   courseZ: number; side: -1 | 1; time: number; ended: boolean
   x: number; targetZ: number; vx: number; vz: number
+  curve?: LungeCurve
 }
 
 export const boatLungeTiming = { bite: 2.55, strike: 3.1, clear: 3.65, end: 5 } as const
+export const boatSharkLength = 21.39
+const sharkTailReach = boatSharkLength * 1.1
+const sharkClearance = boatSharkLength * 0.29 + 0.65
+const lungeKnots = [0, 1.45, boatLungeTiming.strike, 4.12, boatLungeTiming.end]
+type LungeCurve = { offsets: readonly number[]; slopes: readonly number[] }
+type LungeMotion = Pick<BoatLunge, 'x' | 'targetZ' | 'vx' | 'vz' | 'curve'>
 
-// Both damage and rendering use this path for the tip of the shark's snout.
-export function boatLungePosition(lunge: BoatLunge, age: number) {
+// Damage and rendering follow the same snout position and tangent in course coordinates.
+export function boatLungePosition(lunge: LungeMotion, age: number) {
   const travel = age - boatLungeTiming.strike
-  return { x: lunge.x + travel * lunge.vx, z: lunge.targetZ + travel * lunge.vz }
+  const x = lunge.x + travel * lunge.vx, z = lunge.targetZ + travel * lunge.vz
+  const { vx, vz, curve } = lunge
+  if (!curve) return { x, z, vx, vz }
+  const { offsets, slopes } = curve
+  const end = lungeKnots.findIndex((time, i) => i > 0 && time >= age)
+  const j = end < 0 ? lungeKnots.length - 1 : end
+  const i = j - 1
+  const dt = lungeKnots[j] - lungeKnots[i]
+  const t = clamp((age - lungeKnots[i]) / dt), t2 = t * t
+  const a = offsets[i], b = offsets[j], m = slopes[i] * dt, n = slopes[j] * dt
+  const lateral = lerp(a, b, t2 * (3 - 2 * t)) + t * (1 - t) * ((1 - t) * m - t * n)
+  const rate = (6 * t * (1 - t) * (b - a) + (3 * t2 - 4 * t + 1) * m + (3 * t2 - 2 * t) * n) / dt
+  const speed = Math.hypot(vx, vz)
+  return { x: x - lateral * vz / speed, z: z + lateral * vx / speed, vx: vx - rate * vz / speed, vz: vz + rate * vx / speed }
+}
+
+// Intersect the snout-to-tail span with the same convex footprint the boat uses, inflated by the shark's beam.
+function sharkTouchesReef(rock: ReefHazard, noseX: number, noseZ: number, tailX: number, tailZ: number) {
+  const reach = rock.radius + sharkClearance * contactMarginScale
+  if (rock.x < Math.min(noseX, tailX) - reach || rock.x > Math.max(noseX, tailX) + reach
+    || rock.z < Math.min(noseZ, tailZ) - reach || rock.z > Math.max(noseZ, tailZ) + reach) return false
+  const cos = Math.cos(rock.yaw), sin = Math.sin(rock.yaw)
+  const ax = noseX - rock.x, az = noseZ - rock.z, bx = tailX - rock.x, bz = tailZ - rock.z
+  const x1 = ax * cos + az * sin, z1 = ax * sin - az * cos
+  const x2 = bx * cos + bz * sin, z2 = bx * sin - bz * cos
+  let enter = 0, leave = 1
+  for (let i = 0; i < contactNormals.length; i++) {
+    const [nx, nz] = contactNormals[i]
+    const edge = rock.profile[i + 4] * rock.length + sharkClearance
+    const a = x1 * nx + z1 * nz - edge, b = x2 * nx + z2 * nz - edge
+    if (a > 0 && b > 0) return false
+    if (a > 0) enter = Math.max(enter, a / (a - b))
+    else if (b > 0) leave = Math.min(leave, a / (a - b))
+    if (enter > leave) return false
+  }
+  return true
+}
+
+function clearLunge(lunge: LungeMotion, rocks: readonly ReefHazard[]) {
+  // The extra clearance covers motion between samples and the tail swing in the clip.
+  const samples = 125
+  const step = boatLungeTiming.end / samples
+  const turnLimit = Math.cos(1.8 * step)
+  let forwardX = 0, forwardZ = 0
+  for (let i = 0; i <= samples; i++) {
+    const { x, z, vx, vz } = boatLungePosition(lunge, i * step)
+    const speed = Math.hypot(vx, vz)
+    const dx = vx / speed, dz = vz / speed
+    if (i > 0 && forwardX * dx + forwardZ * dz < turnLimit) return false
+    if (rocks.some(rock => sharkTouchesReef(rock, x + dx * .8, z + dz * .8, x - dx * sharkTailReach, z - dz * sharkTailReach))) return false
+    forwardX = dx
+    forwardZ = dz
+  }
+  return true
+}
+
+const lungeBends = [
+  [5, 3, 0, -2, -4], [4, 2, 0, 2, 5], [0, 4, 0, 0, 0], [0, 0, 0, 3, 5],
+  [0, 8, 0, 0, 0], [10, 9, 0, 0, 0], [0, 0, 0, 7, 12],
+  [12, 10, 0, -5, -10], [16, 13, 0, 7, 12], [20, 12, 0, 0, 0], [23, 17, 0, -5, -10],
+] as const
+const lungeShifts = [0, 4, -4, 9, -9, 16, -16, 26, -26, 38, -38, 50, -50]
+const maxLateralReach = Math.max(...lungeShifts) + 2 * Math.max(...lungeBends.flat().map(Math.abs))
+
+export function planBoatLunge(lunge: LungeMotion, hazards: readonly Hazard[]): LungeMotion | null {
+  const longitudinalReach = Math.hypot(lunge.vx, lunge.vz) * boatLungeTiming.strike
+  const reach = Math.hypot(longitudinalReach, maxLateralReach) + sharkTailReach + 1 + sharkClearance * contactMarginScale
+  const rocks = hazards.filter((h): h is ReefHazard => h.type === 'reef'
+    && Math.abs(h.x - lunge.x) < reach + h.radius && Math.abs(h.z - lunge.targetZ) < reach + h.radius)
+  if (!rocks.length || clearLunge(lunge, rocks)) return lunge
+
+  // Prefer a bend that still reaches the original strike point. If it is occupied, the shark veers past it.
+  for (const shift of lungeShifts) {
+    for (const bend of lungeBends) for (const side of [1, -1]) {
+      const offsets = bend.map(value => shift + value * side)
+      const slopes = offsets.map((_, i) => i === 0 || i === offsets.length - 1 ? 0
+        : (offsets[i + 1] - offsets[i - 1]) / (lungeKnots[i + 1] - lungeKnots[i - 1]))
+      const pass = { ...lunge, curve: { offsets, slopes } }
+      if (clearLunge(pass, rocks)) return pass
+    }
+  }
+  // If a reef is too tight for a turn at this speed, a displaced pass is safer than diving through it.
+  for (const shift of lungeShifts.slice(1)) {
+    const pass = { ...lunge, curve: { offsets: lungeKnots.map(() => shift), slopes: lungeKnots.map(() => 0) } }
+    if (clearLunge(pass, rocks)) return pass
+  }
+  return null
 }
 
 export const courseLabel = (d: number) =>
@@ -163,6 +346,7 @@ export const courseLabel = (d: number) =>
 export class Boat {
   readonly hazards: Hazard[] = []
   private readonly hazardReach: number
+  private readonly bendSide: number
   readonly lunges: BoatLunge[] = [
     { courseZ: 455, side: -1, time: -1, ended: false, x: 0, targetZ: 0, vx: 0, vz: 0 },
     { courseZ: 689, side: 1, time: -1, ended: false, x: 0, targetZ: 0, vx: 0, vz: 0 },
@@ -197,9 +381,15 @@ export class Boat {
       this.hazards.push({ x: main, z, type, radius, hit: false })
       this.hazards.push({ x: flank, z: z + 6, type, radius: 1.3, hit: false })
     }
-    this.hazards.push(...makeReefs(seed))
+    const { rocks, bendSide } = makeReefs(seed)
+    this.bendSide = bendSide
+    this.hazards.push(...rocks)
     this.hazards.sort((a, b) => a.z - b.z)
     this.hazardReach = Math.max(warningRange, ...this.hazards.map(h => h.radius + boatClearance * contactMarginScale))
+  }
+
+  reefRouteX(z: number) {
+    return reefRouteX(z, this.bendSide)
   }
 
   tick(dt: number, intent: ControlIntent, assist: boolean) {
@@ -254,8 +444,17 @@ export class Boat {
         lunge.targetZ = this.z + forwardZ * lead
         lunge.vx = -(forwardZ * flank + forwardX * 14) / boatLungeTiming.strike
         lunge.vz = -(-forwardX * flank + forwardZ * 14) / boatLungeTiming.strike
+        const approach = planBoatLunge(lunge, this.hazards)
+        if (!approach) {
+          lunge.ended = true
+          lunge.time = -1
+          continue
+        }
+        lunge.curve = approach.curve
+        const spawn = boatLungePosition(lunge, 0)
+        lunge.side = (spawn.x - this.x) * forwardZ - (spawn.z - this.z) * forwardX < 0 ? -1 : 1
         const text = lunge.side < 0 ? 'MEGALODON ON LEFT · STEER RIGHT' : 'MEGALODON ON RIGHT · STEER LEFT'
-        this.emit('LUNGE_WARNING', { x: flank, text })
+        this.emit('LUNGE_WARNING', { x: lunge.side * 22, text })
       }
       const age = this.time - lunge.time
       if (age < boatLungeTiming.bite) continue

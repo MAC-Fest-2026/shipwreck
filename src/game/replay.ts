@@ -1,6 +1,7 @@
 import { tuning } from '../app/tuning'
 import { clamp } from '../core/math'
 import { neutralIntent, type ControlIntent } from '../input/intent'
+import { boatLungePosition, boatLungeTiming } from '../sim/boat'
 import { Session } from './session'
 
 export const defaultAssists = { aim: true, steering: true, stabilization: 0.35, winchOnly: false }
@@ -29,7 +30,9 @@ export function pilotBot(run: Session): ControlIntent {
   }
   if (run.phase === 'boat') {
     const warning = b.lunges.find(l => l.time >= 0 && !l.ended)
-    const x = warning ? (warning.x <= 0 ? 8 : -8) : 0
+    const route = b.reefRouteX(b.z + 18)
+    const strikeX = warning ? boatLungePosition(warning, boatLungeTiming.strike).x : route
+    const x = warning ? route + (route < strikeX ? -1 : 1) * (Math.abs(route) > 5 ? 6.25 : 8) : route
     return { ...neutralIntent, steer: clamp((x - b.x) * 0.09 - b.heading * 1.65, -1, 1),
       throttle: b.z > 875 ? 0 : 0.69 }
   }
