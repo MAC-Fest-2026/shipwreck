@@ -64,7 +64,7 @@ export function prepareHelicopterLoop(buffer: AudioBuffer) {
   }
   const rms = Math.sqrt(energy / (buffer.numberOfChannels * buffer.length))
   // Calibrate the recording against the rain while leaving headroom at full rotor gain.
-  const trim = peak > 0 ? Math.min(0.40 / rms, 2.8 / peak, 6) : 1
+  const trim = peak > 0 ? Math.min(0.50 / rms, 3.50 / peak, 7.50) : 1
   return { trim, loopStart: overlap / buffer.sampleRate }
 }
 
