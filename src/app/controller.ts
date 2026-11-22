@@ -13,6 +13,7 @@ import type { GameEvent } from '../game/events'
 import type { InputMode, RunRecord } from '../game/score'
 import { ScoreRepository } from '../persistence/scores'
 import type { GameRenderer } from '../render/renderer'
+import { setWaveIntensity } from '../sim/water'
 
 export type Screen = 'title' | 'camera' | 'calibration' | 'callsign' | 'briefing' | 'game' | 'leaderboard' | 'settings'
 type CameraState = 'off' | 'loading' | 'live' | 'error'
@@ -94,6 +95,7 @@ export class Controller {
   private savingRun: string | null = null
 
   constructor(private readonly renderView: (control: Controller) => void) {
+    setWaveIntensity(this.settings.waveIntensity)
     this.stage = document.querySelector('#stage')!
     this.stage.hidden = true
     this.video = document.querySelector('#camera-feed')!
@@ -157,7 +159,7 @@ export class Controller {
       if (session?.record && this.screen === 'game' && ms - this.arrivedAt > 20000) this.openLeaderboard()
       if (ms - this.lastAction > 60000) this.quit()
     }
-    if (this.screen === 'game' && session) {
+    if (session && (this.screen === 'game' || this.previewingSettings && this.dirty)) {
       if (this.overlay === 'graphics' || session.phase === 'results' && this.frame % 3 !== 0) {
         // The title art remains available while a graphics context recovers.
       } else if (this.renderer && (session.phase !== 'results' || this.frame % 3 === 0)) {
@@ -185,7 +187,7 @@ export class Controller {
   go(screen: Screen) {
     this.screen = screen
     this.enteredAt = this.lastAction = this.now
-    this.stage.hidden = screen !== 'game'
+    this.stage.hidden = screen !== 'game' && !this.previewingSettings
     this.setTarget(null)
     this.dirty = true
     this.fallback.active = this.mode === 'keyboardMouse' && screen === 'game'
@@ -383,10 +385,17 @@ export class Controller {
     this.go('settings')
   }
 
+  private get previewingSettings() {
+    return this.screen === 'settings' && this.settingsReturn === 'game' && !!this.game
+  }
+
   changeSetting<K extends keyof Settings>(key: K, value: Settings[K]) {
     this.settings = { ...this.settings, [key]: value }
-    this.radio.configure(this.settings)
-    if (this.game && key !== 'survivorCount') this.game.assist = { ...this.game.assist, [key]: value }
+    if (key === 'waveIntensity') this.settings.waveIntensity = setWaveIntensity(this.settings.waveIntensity)
+    else {
+      this.radio.configure(this.settings)
+      if (this.game && key !== 'survivorCount') this.game.assist = { ...this.game.assist, [key]: value }
+    }
     put('shipwreck-settings-v1', this.settings)
     this.dirty = true
   }

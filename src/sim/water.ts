@@ -1,3 +1,19 @@
+import { clamp } from '../core/math'
+
+export const waveIntensity = { min: 0.5, max: 2.5, step: 0.1, default: 1.6 }
+export const waveUniforms = { waveIntensity: { value: waveIntensity.default } }
+
+export function normalizeWaveIntensity(value: unknown) {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? clamp(value, waveIntensity.min, waveIntensity.max)
+    : waveIntensity.default
+}
+
+export function setWaveIntensity(value: number) {
+  waveUniforms.waveIntensity.value = normalizeWaveIntensity(value)
+  return waveUniforms.waveIntensity.value
+}
+
 // Ocean settings. Both simulation heights and the GLSL surface use these waves.
 export const waves = [
   // dir X, dir Z, amplitude, radians/m, radians/sec
@@ -16,6 +32,7 @@ export interface WaveSlope {
 
 // Height-field form of Gerstner. CPU queries use world X/Z directly.
 export function waveHeight(x: number, z: number, t: number, slope?: WaveSlope) {
+  const intensity = waveUniforms.waveIntensity.value
   let height = 0
   let slopeX = 0
   let slopeZ = 0
@@ -29,16 +46,17 @@ export function waveHeight(x: number, z: number, t: number, slope?: WaveSlope) {
     }
   }
   if (slope) {
-    slope.x = slopeX
-    slope.z = slopeZ
+    slope.x = slopeX * intensity
+    slope.z = slopeZ * intensity
   }
-  return height
+  return height * intensity
 }
 
 const glslFloat = (value: number) => Number.isInteger(value) ? `${value}.0` : String(value)
 
 // The sample returns height followed by the two analytical slopes.
 export const waterGlsl = `
+uniform float waveIntensity;
 vec3 oceanSample(vec2 p, float t) {
   vec3 result = vec3(0.);
   ${waves.map(wave => {
@@ -49,6 +67,6 @@ vec3 oceanSample(vec2 p, float t) {
     result += vec3(${amplitude} * sin(phase), ${amplitude} * ${k} * cos(phase) * dir);
   }`
   }).join('\n')}
-  return result;
+  return result * waveIntensity;
 }
 `

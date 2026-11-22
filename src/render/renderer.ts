@@ -5,9 +5,9 @@ import { BloomEffect, EffectComposer, EffectPass, RenderPass, VignetteEffect } f
 import { tuning } from '../app/tuning'
 import { clamp, damp, lerp, seededRandom } from '../core/math'
 import { timelines, type Session } from '../game/session'
-import { boatLungePosition, boatLungeTiming, harbor, type FloatingHazard } from '../sim/boat'
+import { boatBuoyancyCenter, boatLungePosition, boatLungeTiming, harbor, type FloatingHazard } from '../sim/boat'
 import { boardBreachHeight, roster } from '../sim/rescue'
-import { waterGlsl, waveHeight } from '../sim/water'
+import { waterGlsl, waveHeight, waveUniforms } from '../sim/water'
 import { beam, boatSharkWaterline, environment, lanternGlow, placeBeam, wreckAtmosphere, wreckDebris } from './environment'
 import { claw, cockpit, dock, fitModelScale, hazard, HelicopterModel, instanceRocks, islandPlantings, islandSurface,
   light, lighthouseFoundation, lighthouseSite, MODEL_SCALES, mooringLights, person, prepareCruiseWreck, prepareIsland, prepareLighthouse,
@@ -189,7 +189,7 @@ function wreckFoam() {
   geometry.setIndex(indices)
   const time = { value: 0 }, sink = { value: 0 }
   const material = new T.ShaderMaterial({
-    uniforms: { time, sink }, transparent: true, depthWrite: false, side: T.DoubleSide, forceSinglePass: true,
+    uniforms: { time, sink, ...waveUniforms }, transparent: true, depthWrite: false, side: T.DoubleSide, forceSinglePass: true,
     vertexShader: `
       uniform float time; varying vec2 tex, seaPoint;
       ${waterGlsl}
@@ -587,8 +587,8 @@ export class GameRenderer {
     this.camera.position.lerp(this.eye, weight)
     this.scratch.lerp(this.point, weight)
     this.camera.up.set(0, 1, 0)
+    if (firstPerson) this.camera.up.applyQuaternion(this.rescueBoat.quaternion)
     this.camera.lookAt(this.scratch)
-    if (firstPerson && !settings.reduceMotion) this.camera.rotateZ(run.boat.roll)
     this.camera.fov = lerp(this.camera.fov, desiredFov, weight)
     this.camera.updateProjectionMatrix()
     if (isRescue) {
@@ -860,15 +860,19 @@ export class GameRenderer {
       })
       return 51
     }
-    const water = waveHeight(b.x, -b.z, t)
+    const { heave, pitch, roll } = b.wavePose(t)
     const shake = !reduced && b.time - b.lastImpact < 0.48 ? Math.sin(t * 75) * (0.48 - (b.time - b.lastImpact)) : 0
-    this.eye.set(b.x + shake, (this.vesselHelm?.y ?? wheelhouseEye.y) + water * (reduced ? 0.13 : 0.56), -b.z)
-    this.point.set(this.eye.x + Math.sin(b.heading) * 48, this.eye.y - 4.2, -b.z - Math.cos(b.heading) * 48)
-    if (this.vesselHelm) {
-      this.rescueBoat.rotation.set(reduced ? 0 : -b.roll, Math.PI / 2 - b.heading, 0, 'YXZ')
-      // Anchor the wheelhouse to the existing navigation point so the render pose cannot drift from the camera.
-      this.rescueBoat.position.copy(this.vesselHelm).applyQuaternion(this.rescueBoat.quaternion).negate().add(this.eye)
-    }
+    const helm = this.vesselHelm ?? wheelhouseEye
+    const boat = this.rescueBoat
+    boat.rotation.set(reduced ? 0 : roll, Math.PI / 2 - b.heading, reduced ? 0 : pitch, 'YXZ')
+    // Rotate around the waterline near midships. The helm and camera follow the same rigid pose.
+    boat.position.set(-helm.x - boatBuoyancyCenter, 0, -helm.z).applyQuaternion(boat.quaternion)
+    boat.position.x += b.x + boatBuoyancyCenter * Math.sin(b.heading)
+    boat.position.y += heave * (reduced ? 0.2 : 1)
+    boat.position.z -= b.z + boatBuoyancyCenter * Math.cos(b.heading)
+    this.eye.copy(helm).applyQuaternion(boat.quaternion).add(boat.position)
+    this.eye.x += shake
+    this.point.set(48, -4.2, 0).applyQuaternion(boat.quaternion).add(this.eye)
     this.cabin.wheel.rotation.z = -b.steer * 1.55
     this.cabin.throttle.rotation.x = lerp(-0.45, 0.56, run.desired.throttle)
     this.cabin.setHeading(b.heading)

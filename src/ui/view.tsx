@@ -7,6 +7,7 @@ import { clamp, clockLabel } from '../core/math'
 import { instructions } from '../input/calibration'
 import { courseLabel } from '../sim/boat'
 import { maxSurvivors } from '../sim/rescue'
+import { waveIntensity } from '../sim/water'
 import { isCinematic } from '../game/session'
 import { downloadRuns } from '../persistence/scores'
 import type { RunRecord } from '../game/score'
@@ -202,6 +203,9 @@ function UserSettings({ c }: { c: Controller }) {
     ['aim', 'Pickup assist'], ['steering', 'Steering assist'], ['winchOnly', 'Automatic claw'],
   ]
   const volumes = [['master', 'Master'], ['music', 'Music'], ['effects', 'Effects'], ['voice', 'Voice']] as const
+  const wavePercent = Math.round(c.settings.waveIntensity * 100)
+  const waveStep = Math.round(waveIntensity.step * 100)
+  const adjustWaves = (direction: number) => c.changeSetting('waveIntensity', (wavePercent + direction * waveStep) / 100)
   return <section class="panel settings-panel" aria-labelledby="settings-title">
     <p class="kicker mono"><Beacon live /> CONTROL PANEL</p>
     <h2 id="settings-title">Settings</h2>
@@ -226,7 +230,15 @@ function UserSettings({ c }: { c: Controller }) {
             action={() => c.changeSetting('survivorCount', Math.min(maxSurvivors, c.settings.survivorCount + 1))}>+</Button>
         </div></div>
       </div>
-      <div class="settings-block"><h3>Display &amp; controls</h3><div class="switches">
+      <div class="settings-block"><h3>Display &amp; controls</h3>
+        <div class="setting-row"><span>Wave Intensity</span><div class="stepper" role="group" aria-label="Wave Intensity">
+          <Button variant="letter-button" label="Lower wave intensity" disabled={c.settings.waveIntensity <= waveIntensity.min}
+            action={() => adjustWaves(-1)}>−</Button>
+          <strong aria-live="polite">{wavePercent}%</strong>
+          <Button variant="letter-button" label="Raise wave intensity" disabled={c.settings.waveIntensity >= waveIntensity.max}
+            action={() => adjustWaves(1)}>+</Button>
+        </div></div>
+        <div class="switches">
         {switches.map(([key, label]) => <Button key={key} variant={c.settings[key] ? 'switch on' : 'switch'}
           action={() => c.changeSetting(key, !c.settings[key])}>{label}<span>{c.settings[key] ? 'On' : 'Off'}</span></Button>)}
       </div></div>

@@ -2,9 +2,14 @@ import { tuning } from '../app/tuning'
 import { approach, clamp, lerp, seededRandom } from '../core/math'
 import type { ControlIntent } from '../input/intent'
 import type { Emit, GameEvent } from '../game/events'
+import { waveHeight } from './water'
 
 const T = tuning.boat
 const boatClearance = 1.1
+// Center of the floating hull relative to the helm, in the forward direction.
+export const boatBuoyancyCenter = -3.7
+const buoyancyHalfLength = 8.4
+const buoyancyHalfBeam = 2.8
 const warningRange = 25
 const contactMarginScale = 1 / Math.cos(Math.PI / 12)
 export const reefScales = {
@@ -459,7 +464,7 @@ export class Boat {
   z = 0
   heading = 0
   speed = 0
-  roll = 0
+  private bank = 0
   steer = 0
   time = 0
   hull: number = T.maxHull
@@ -496,6 +501,21 @@ export class Boat {
     return reefRouteX(z, this.bendSide)
   }
 
+  wavePose(time = this.time) {
+    const sin = Math.sin(this.heading), cos = Math.cos(this.heading)
+    const x = this.x + boatBuoyancyCenter * sin
+    const z = -this.z - boatBuoyancyCenter * cos
+    const bow = waveHeight(x + buoyancyHalfLength * sin, z - buoyancyHalfLength * cos, time)
+    const stern = waveHeight(x - buoyancyHalfLength * sin, z + buoyancyHalfLength * cos, time)
+    const port = waveHeight(x - buoyancyHalfBeam * cos, z - buoyancyHalfBeam * sin, time)
+    const starboard = waveHeight(x + buoyancyHalfBeam * cos, z + buoyancyHalfBeam * sin, time)
+    return {
+      heave: (bow + stern + port + starboard) / 4,
+      pitch: Math.atan2(bow - stern, 2 * buoyancyHalfLength),
+      roll: Math.atan2(port - starboard, 2 * buoyancyHalfBeam) + this.bank,
+    }
+  }
+
   tick(dt: number, intent: ControlIntent, assist: boolean) {
     if (this.done) return
     const previousTime = this.time
@@ -510,7 +530,7 @@ export class Boat {
     const heading = clamp(this.heading + this.steer * (intent.trackingState === 'ok' ? 1 : 0) * T.turn
       * clamp(this.speed / 9, 0.25, 1) * dt, -1.12, 1.12)
     this.advance(dt, heading)
-    this.roll = approach(this.roll, -this.steer * 0.17 + Math.sin(this.time * 2.15) * 0.036, dt * 0.7)
+    this.bank = approach(this.bank, this.steer * 0.17, dt * 0.7)
     if (intent.trackingState !== 'ok') return
 
     for (const obstacle of this.hazards) {

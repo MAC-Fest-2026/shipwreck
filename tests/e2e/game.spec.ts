@@ -39,6 +39,19 @@ test('keyboard onboarding, rescue HUD and pause', async ({ page }) => {
   await expect(page.getByLabel('Survivor tracker')).toBeVisible()
   await page.getByRole('button', { name: 'Pause mission' }).click()
   await expect(page.getByRole('heading', { name: 'Paused', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Settings', exact: true }).click()
+  const waves = page.getByRole('group', { name: 'Wave Intensity' })
+  await expect(waves).toHaveText(/160%/)
+  await expect(page.locator('#stage canvas')).toBeVisible()
+  await waves.getByRole('button', { name: 'Raise wave intensity' }).click()
+  await expect(waves).toHaveText(/170%/)
+  expect(await page.evaluate(async () => {
+    const path = '/src/sim/water.ts'
+    const { waveUniforms } = await import(path)
+    const stored = JSON.parse(localStorage.getItem('shipwreck-settings-v1') ?? '{}')
+    return [waveUniforms.waveIntensity.value, stored.waveIntensity]
+  })).toEqual([1.7, 1.7])
+  await page.getByRole('button', { name: /Done/ }).click()
   await page.getByRole('button', { name: /Resume/ }).click()
   await expect(page.getByRole('heading', { name: 'Paused', exact: true })).toHaveCount(0)
   expect(errors).toEqual([])
@@ -97,7 +110,7 @@ test('water height matches the actual WebGL2 shader', async ({ page }) => {
   await page.goto('/')
   const maxError = await page.evaluate(async () => {
     const modulePath = '/src/sim/water.ts'
-    const { waveHeight, waterGlsl } = await import(modulePath)
+    const { waveHeight, waterGlsl, setWaveIntensity } = await import(modulePath)
     const canvas = document.createElement('canvas')
     const gl = canvas.getContext('webgl2')
     if (!gl) throw new Error('WebGL2 unavailable')
@@ -112,11 +125,11 @@ test('water height matches the actual WebGL2 shader', async ({ page }) => {
     gl.attachShader(program, compile(gl.VERTEX_SHADER, `#version 300 es
       precision highp float;
       in vec3 samplePosition;
-      out float height;
+      out vec3 wave;
       ${waterGlsl}
-      void main(){height=oceanSample(samplePosition.xy,samplePosition.z).x;gl_Position=vec4(0.,0.,0.,1.);}`))
+      void main(){wave=oceanSample(samplePosition.xy,samplePosition.z);gl_Position=vec4(0.,0.,0.,1.);}`))
     gl.attachShader(program, compile(gl.FRAGMENT_SHADER, '#version 300 es\nprecision highp float;out vec4 c;void main(){c=vec4(1.);}'))
-    gl.transformFeedbackVaryings(program, ['height'], gl.INTERLEAVED_ATTRIBS)
+    gl.transformFeedbackVaryings(program, ['wave'], gl.INTERLEAVED_ATTRIBS)
     gl.linkProgram(program)
     if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(program) ?? 'link failed')
     gl.useProgram(program)
@@ -128,18 +141,29 @@ test('water height matches the actual WebGL2 shader', async ({ page }) => {
     const attribute = gl.getAttribLocation(program, 'samplePosition')
     gl.enableVertexAttribArray(attribute)
     gl.vertexAttribPointer(attribute, 3, gl.FLOAT, false, 0, 0)
-    const result = new Float32Array(150)
+    const result = new Float32Array(values.length)
     const resultBuffer = gl.createBuffer()!
     gl.bindBuffer(gl.TRANSFORM_FEEDBACK_BUFFER, resultBuffer)
     gl.bufferData(gl.TRANSFORM_FEEDBACK_BUFFER, result.byteLength, gl.STREAM_READ)
     gl.bindBufferBase(gl.TRANSFORM_FEEDBACK_BUFFER, 0, resultBuffer)
-    gl.enable(gl.RASTERIZER_DISCARD)
-    gl.beginTransformFeedback(gl.POINTS)
-    gl.drawArrays(gl.POINTS, 0, result.length)
-    gl.endTransformFeedback()
-    gl.disable(gl.RASTERIZER_DISCARD)
-    gl.getBufferSubData(gl.TRANSFORM_FEEDBACK_BUFFER, 0, result)
-    return Math.max(...result.map((v, i) => Math.abs(v - waveHeight(values[i * 3], values[i * 3 + 1], values[i * 3 + 2]))))
+    const intensity = gl.getUniformLocation(program, 'waveIntensity')
+    const slope = { x: 0, z: 0 }
+    let error = 0
+    for (const level of [0.5, 1.6, 2.5]) {
+      gl.uniform1f(intensity, setWaveIntensity(level))
+      gl.enable(gl.RASTERIZER_DISCARD)
+      gl.beginTransformFeedback(gl.POINTS)
+      gl.drawArrays(gl.POINTS, 0, result.length / 3)
+      gl.endTransformFeedback()
+      gl.disable(gl.RASTERIZER_DISCARD)
+      gl.getBufferSubData(gl.TRANSFORM_FEEDBACK_BUFFER, 0, result)
+      for (let i = 0; i < result.length; i += 3) {
+        const height = waveHeight(values[i], values[i + 1], values[i + 2], slope)
+        error = Math.max(error, Math.abs(result[i] - height), Math.abs(result[i + 1] - slope.x),
+          Math.abs(result[i + 2] - slope.z))
+      }
+    }
+    return error
   })
   expect(maxError).toBeLessThan(0.01)
 })

@@ -1,7 +1,7 @@
 import * as T from 'three'
 import { seededRandom } from '../core/math'
 import { boatLungeTiming, harbor } from '../sim/boat'
-import { waterGlsl, waveAmplitude, waveHeight } from '../sim/water'
+import { waterGlsl, waveAmplitude, waveHeight, waveUniforms } from '../sim/water'
 
 function lungeElevation(age: number) {
   const { bite, strike, clear, end } = boatLungeTiming
@@ -94,7 +94,7 @@ export function seaGeometry() {
 export function environment(scene: T.Scene): SceneEnvironment {
   const uniforms = environmentSettings()
   const sea = new T.Mesh(seaGeometry(), new T.ShaderMaterial({
-    uniforms: { ...uniforms, waterDetail: { value: waterDetailTexture() },
+    uniforms: { ...uniforms, ...waveUniforms, waterDetail: { value: waterDetailTexture() },
       crestScale: { value: 1 / Math.max(waveAmplitude, 0.001) } },
     vertexShader: `
       uniform float time;
