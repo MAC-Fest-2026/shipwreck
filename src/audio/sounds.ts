@@ -164,36 +164,15 @@ export const effects = {
 
 export type EffectSlot = keyof typeof effects
 
-export function radioChannel(audio: AudioContext, output: AudioNode) {
-  const drive = audio.createWaveShaper()
-  drive.curve = Float32Array.from({ length: 257 }, (_, i) => Math.tanh((i / 128 - 1) * 1.3))
-  drive.oversample = '2x'
-  const highpass = audio.createBiquadFilter()
-  highpass.type = 'highpass'
-  highpass.frequency.value = 300
-  highpass.Q.value = 0.7
-  const lowpass = audio.createBiquadFilter()
-  lowpass.type = 'lowpass'
-  lowpass.frequency.value = 3000
-  lowpass.Q.value = 0.7
-  const compressor = audio.createDynamicsCompressor()
-  compressor.threshold.value = -20
-  compressor.ratio.value = 3
-  compressor.attack.value = 0.004
-  compressor.release.value = 0.11
-  drive.connect(highpass).connect(lowpass).connect(compressor).connect(output)
-  return drive
-}
-
 export const radioSlots = ['radio-squelch-open', 'radio-squelch-close', 'radio-static'] as const
-export const radioLeadIn = 0.12
-export const radioTail = 0.16
+export const radioLeadIn = 0.09
+export const radioTail = 0.125
 
 export function radioTransmission(audio: AudioContext, channel: AudioNode, noise: AudioBuffer,
   [opening, closing, staticClip]: readonly (AudioBuffer | null)[]) {
   const gate = gainTo(audio, channel, 1)
   const time = audio.currentTime
-  const hiss = gainTo(audio, gate, staticClip ? 0.035 : 0.058)
+  const hiss = gainTo(audio, gate, staticClip ? 0.025 : 0.034)
   const carrier = bufferTo(audio, hiss, staticClip ?? noise)
   carrier.loop = true
   carrier.start(time + radioLeadIn)
@@ -202,15 +181,15 @@ export function radioTransmission(audio: AudioContext, channel: AudioNode, noise
   function squelch(buffer: AudioBuffer | null, t: number, opening: boolean) {
     if (buffer) {
       const duration = Math.min(buffer.duration, opening ? radioLeadIn : radioTail)
-      const envelope = gainTo(audio, gate, 0.23)
-      envelope.gain.setValueAtTime(0.23, t + duration * 0.72)
+      const envelope = gainTo(audio, gate, 0.28)
+      envelope.gain.setValueAtTime(0.28, t + duration * 0.72)
       envelope.gain.linearRampToValueAtTime(0, t + duration)
       const source = bufferTo(audio, envelope, buffer)
       source.start(t, 0, duration)
       source.addEventListener('ended', () => envelope.disconnect(), { once: true })
     } else {
-      noiseBurst(audio, gate, noise, t, opening ? 0.092 : 0.14, opening ? 1850 : 1460, 0.28)
-      sweep(audio, gate, t, opening ? 1080 : 720, 480, 0.038, 0.17, 'triangle')
+      sweep(audio, gate, t, opening ? 2200 : 1680, opening ? 940 : 710, 0.023, 0.29, 'triangle')
+      noiseBurst(audio, gate, noise, t + 0.004, opening ? 0.061 : 0.096, opening ? 2440 : 1920, 0.33)
     }
   }
 
@@ -221,8 +200,8 @@ export function radioTransmission(audio: AudioContext, channel: AudioNode, noise
       if (finished) return
       finished = true
       const t = audio.currentTime
-      hiss.gain.setTargetAtTime(0, t, 0.022)
-      carrier.stop(t + 0.10)
+      hiss.gain.setTargetAtTime(0, t, 0.014)
+      carrier.stop(t + 0.07)
       squelch(closing, t, false)
     },
     cancel() {

@@ -4,7 +4,7 @@ import type { ScenePhase } from '../game/session'
 import { AudioClips, bufferTo, gainTo } from './clips'
 import {
   effects as synthesize, loopEngine, loopMusic, loopRain, loopSlot, noiseBuffer, type EffectSlot,
-  radioChannel, radioLeadIn, radioSlots, radioTail, radioTransmission,
+  radioLeadIn, radioSlots, radioTail, radioTransmission,
 } from './sounds'
 
 const names: Record<string, string> = {
@@ -47,6 +47,33 @@ function effectFor(event: GameEvent): EffectSlot | undefined {
       if (event.impact === 'shark') return 'boat-shark-hit'
       return 'impact-thud'
   }
+}
+
+function radioChannel(audio: AudioContext, output: AudioNode) {
+  const highpass = audio.createBiquadFilter()
+  highpass.type = 'highpass'
+  highpass.frequency.value = 300
+  highpass.Q.value = 0.707
+  const drive = audio.createWaveShaper()
+  drive.curve = Float32Array.from({ length: 257 }, (_, i) => Math.tanh((i / 128 - 1) * 1.16))
+  drive.oversample = '2x'
+  const presence = audio.createBiquadFilter()
+  presence.type = 'peaking'
+  presence.frequency.value = 1850
+  presence.Q.value = 0.9
+  presence.gain.value = 3
+  const lowpass = audio.createBiquadFilter()
+  lowpass.type = 'lowpass'
+  lowpass.frequency.value = 3000
+  lowpass.Q.value = 0.707
+  const compressor = audio.createDynamicsCompressor()
+  compressor.threshold.value = -17
+  compressor.knee.value = 16
+  compressor.ratio.value = 2.4
+  compressor.attack.value = 0.005
+  compressor.release.value = 0.085
+  highpass.connect(drive).connect(presence).connect(lowpass).connect(compressor).connect(output)
+  return highpass
 }
 
 function makeMix(audio: AudioContext, settings: SoundSettings) {

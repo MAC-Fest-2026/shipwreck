@@ -42,4 +42,24 @@
 - **License** Original project asset. Separate license unspecified.
 - **Changes** Created for SHIPWRECK.
 
+## Character dialogue
+
+- **Tool** Hexgrad's Kokoro-82M v1.0, run locally with kokoro-onnx 0.6.1 and the full-precision ONNX model.
+- **Source** [Kokoro-82M model and presets](https://huggingface.co/hexgrad/Kokoro-82M) · [ONNX release](https://github.com/thewh1teagle/kokoro-onnx/releases/tag/model-files-v1.1)
+- **Model license** [Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0)
+- **Changes** Synthesized the 114 dialogue lines as mono Ogg Vorbis clips. Pace and pitch follow the dialogue cues.
+
+| Character | Kokoro preset |
+|---|---|
+| Pilot Reyes | am_michael |
+| Captain Oduya | bm_george |
+| Hollis Brandt | am_onyx |
+| Jay Okafor | am_puck |
+| Dev Kapoor | am_eric |
+| Elias Rook | bm_fable |
+| Tommy Ricci | am_fenrir |
+| Mara Voss | af_heart |
+| Priya Nair | bf_emma |
+| Ana Kapoor | af_bella |
+
 **CGTrader usage note** The CGTrader assets may be incorporated into the finished game with safeguards against access to the model data. Their licenses prohibit sharing the raw model files with others. [CGTrader license terms](https://www.cgtrader.com/pages/terms-and-conditions)

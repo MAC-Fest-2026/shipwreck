@@ -9,10 +9,18 @@ export class AudioClips {
   override(slug: string) {
     let clip = this.overrides.get(slug)
     if (!clip) {
-      clip = this.load('audio/' + slug + '.mp3').then(buffer => buffer ?? this.load('audio/' + slug + '.ogg'))
+      clip = this.loadOverride(slug)
       this.overrides.set(slug, clip)
     }
     return clip
+  }
+
+  private async loadOverride(slug: string) {
+    for (const extension of ['mp3', 'ogg', 'wav']) {
+      const buffer = await this.load('audio/' + slug + '.' + extension)
+      if (buffer) return buffer
+    }
+    return null
   }
 
   load(path: string) {
