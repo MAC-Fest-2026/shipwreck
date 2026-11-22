@@ -17,10 +17,11 @@ const presets = ['MAVERICK', 'SKYLARK', 'TIDERUNNER', 'STORMHAWK']
 const R = tuning.rescue
 const clock = '◷'
 
-function Button({ children, action, variant = 'secondary', disabled = false, label }: {
-  children: ComponentChildren; action: () => void; variant?: string; disabled?: boolean; label?: string
+function Button({ children, action, variant = 'secondary', disabled = false, label, pressed }: {
+  children: ComponentChildren; action: () => void; variant?: string; disabled?: boolean; label?: string; pressed?: boolean
 }) {
-  return <button type="button" class={`action ${variant}`} data-gesture aria-label={label} disabled={disabled} onClick={action}>{children}</button>
+  return <button type="button" class={`action ${variant}`} data-gesture aria-label={label} aria-pressed={pressed}
+    disabled={disabled} onClick={action}>{children}</button>
 }
 
 function Beacon({ live = false }: { live?: boolean }) {
@@ -206,6 +207,8 @@ function UserSettings({ c }: { c: Controller }) {
     <h2 id="settings-title">Settings</h2>
     <div class="settings-grid">
       <div class="settings-block"><h3>Sound</h3>
+        <div class="setting-row"><span>Mute all sound</span><Button label="Mute all sound" pressed={c.settings.muted}
+          action={() => c.changeSetting('muted', !c.settings.muted)}>{c.settings.muted ? 'On' : 'Off'}</Button></div>
         {volumes.map(([key, label]) => <div class="setting-row" key={key}><span>{label}</span><div class="stepper">
           <Button variant="letter-button" label={`Lower ${label} volume`} action={() => c.changeSetting(key, clamp(c.settings[key] - 0.1))}>−</Button>
           <strong>{Math.round(c.settings[key] * 100)}%</strong>

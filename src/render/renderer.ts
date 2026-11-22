@@ -6,7 +6,7 @@ import { tuning } from '../app/tuning'
 import { clamp, damp, lerp, seededRandom } from '../core/math'
 import { timelines, type Session } from '../game/session'
 import { boatLungePosition, boatLungeTiming, islandCrown, type FloatingHazard } from '../sim/boat'
-import { roster } from '../sim/rescue'
+import { boardBreachHeight, roster } from '../sim/rescue'
 import { waterGlsl, waveHeight } from '../sim/water'
 import { beam, boatSharkWaterline, environment, placeBeam, wreckAtmosphere, wreckDebris } from './environment'
 import { claw, cockpit, dock, fitModelScale, hazard, HelicopterModel, instanceRocks, light, lighthouse, MODEL_SCALES, person,
@@ -34,12 +34,6 @@ const wheelhouseOccluders = new Set([
   'Marine_frame_fasteners', 'Wiper_spindle_escutcheons', 'Wiper_spindle_locknuts', 'Rocker_pivot',
   'Torx_drive_recesses',
 ])
-
-// The top of the breach passes over the board at age zero.
-function boardBreachHeight(age: number) {
-  return -1.5 - 6.1 * smoothstep(age, -2.2, -1.25)
-    + 14.5 * smoothstep(age, -1.25, 0) - 14.9 * smoothstep(age, 0, 2.25)
-}
 
 function ring(radius: number, color: string) {
   const meshRing = new T.Mesh(new T.RingGeometry(radius * 0.89, radius, 42), light(color))

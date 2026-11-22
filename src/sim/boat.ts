@@ -1,7 +1,7 @@
 import { tuning } from '../app/tuning'
 import { approach, clamp, lerp, seededRandom } from '../core/math'
 import type { ControlIntent } from '../input/intent'
-import type { Emit } from '../game/events'
+import type { Emit, GameEvent } from '../game/events'
 
 const T = tuning.boat
 const boatClearance = 1.1
@@ -394,6 +394,7 @@ export class Boat {
 
   tick(dt: number, intent: ControlIntent, assist: boolean) {
     if (this.done) return
+    const previousTime = this.time
     this.time += dt
     const approachZone = this.z >= T.approach
     const throttle = clamp(intent.throttle)
@@ -423,7 +424,7 @@ export class Boat {
       if (contact) {
         obstacle.hit = true
         this.x += this.x >= obstacle.x ? 2.8 : -2.8
-        this.damage(obstacle.type === 'reef' ? 25 : 10, obstacle.x)
+        this.damage(obstacle.type === 'reef' ? 25 : 10, obstacle.x, obstacle.type === 'reef' ? 'rock' : 'debris')
       } else if (dz > 0 && distanceSq < warningRange ** 2 && this.time - this.lastHazard > 12) {
         this.lastHazard = this.time
         this.emit('BOAT_HAZARD', { x: obstacle.x, text: obstacle.type === 'reef' ? 'REEF AHEAD' : 'DEBRIS AHEAD' })
@@ -431,6 +432,10 @@ export class Boat {
     }
 
     for (const lunge of this.lunges) {
+      if (lunge.time >= 0 && previousTime - lunge.time < boatLungeTiming.strike
+        && this.time - lunge.time >= boatLungeTiming.strike) {
+        this.emit('WATER_SPLASH', { x: boatLungePosition(lunge, this.time - lunge.time).x, heavySplash: true })
+      }
       if (lunge.ended) continue
       if (lunge.time < 0) {
         if (this.z < lunge.courseZ - 44) continue
@@ -463,7 +468,7 @@ export class Boat {
       if (!contact && age < boatLungeTiming.clear) continue
       lunge.ended = true
       this.emit('LUNGE', { x: snout.x })
-      if (contact) this.damage(35, snout.x)
+      if (contact) this.damage(35, snout.x, 'shark')
     }
     if (!this.sighted && this.z >= 740) {
       this.sighted = true
@@ -482,13 +487,13 @@ export class Boat {
     }
   }
 
-  private damage(amount: number, x: number) {
+  private damage(amount: number, x: number, impact: NonNullable<GameEvent['impact']>) {
     if (this.done) return
     this.hull = Math.max(0, this.hull - amount)
     this.collisions++
     this.lastImpact = this.time
     this.speed *= 0.73
-    this.emit('BOAT_COLLISION', { x, text: 'HULL IMPACT' })
+    this.emit('BOAT_COLLISION', { x, text: 'HULL IMPACT', impact })
     if (this.hull === 0) this.done = 'destroyed'
   }
 }

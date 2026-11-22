@@ -7,6 +7,15 @@ import { waveHeight } from './water'
 const R = tuning.rescue
 const S = tuning.shark
 
+// An age of zero is the top of the visible board-break breach.
+export function boardBreachHeight(age: number) {
+  const ease = (from: number, to: number) => {
+    const progress = clamp((age - from) / (to - from))
+    return progress * progress * (3 - 2 * progress)
+  }
+  return -1.5 - 6.1 * ease(-2.2, -1.25) + 14.5 * ease(-1.25, 0) - 14.9 * ease(0, 2.25)
+}
+
 export const roster = [
   { id: 'mara', name: 'Mara Voss', x: -35.4, z: 0, skin: '#c59374' },
   { id: 'elias', name: 'Elias Rook', x: -34, z: -0.6, skin: '#d3ae94' },
@@ -95,6 +104,7 @@ export class Rescue {
 
   tick(dt: number, intent: ControlIntent, assist: RescueAssists, timeScale = 1) {
     if (this.done) return
+    const previousTime = this.time
     this.time += dt
     const step = dt * timeScale
     let target = intent.heliTargetX * R.span
@@ -127,12 +137,20 @@ export class Rescue {
       if (s.state === 'falling') {
         s.fallSpeed += 9.81 * step
         s.fallY -= s.fallSpeed * step
-        if (s.fallY <= waveHeight(s.x, s.z, this.time) + 0.75) s.state = 'floating'
+        if (s.fallY <= waveHeight(s.x, s.z, this.time) + 0.75) {
+          s.state = 'floating'
+          this.emit('WATER_SPLASH', { x: s.x })
+        }
       }
     }
 
     if (!this.practice) {
       if (intent.trackingState === 'ok') this.updateThreat()
+      const previousAge = previousTime - this.breachedAt
+      const breachAge = this.time - this.breachedAt
+      if (previousAge >= 0 && previousAge < 2.25 && boardBreachHeight(previousAge) > 0 && boardBreachHeight(breachAge) <= 0) {
+        this.emit('WATER_SPLASH', { x: -32, heavySplash: true })
+      }
       if (this.time >= this.danglingAt) {
         const hanging = this.carried[0]
         if (hanging) this.emit('DANGLING', { id: hanging.id })

@@ -13,7 +13,7 @@ export type Settings = SoundSettings & RenderSettings & SessionOptions & {
 }
 const initial: Settings = {
   preview: true, captions: true, captionLarge: false, captionPlate: true, contrast: false,
-  master: 0.62, music: 0.42, effects: 0.70, voice: 0.75, spoken: true,
+  master: 0.62, music: 0.42, effects: 0.70, voice: 0.75, spoken: true, muted: false,
   quality: 'medium', reduceMotion: false, flashes: false,
   aim: true, steering: true, stabilization: 0.35, winchOnly: false, survivorCount: maxSurvivors,
 }

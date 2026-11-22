@@ -47,7 +47,7 @@ export class Controller {
   readonly hands = new HandsIntentProvider(this.calibration ?? defaults)
   readonly fallback = new KeyboardMouseIntentProvider()
   readonly emulator = new HandEmulator()
-  readonly radio = new Radio()
+  readonly radio = new Radio(this.settings)
   readonly scores = new ScoreRepository()
   readonly kiosk = query.has('kiosk')
   readonly debug = import.meta.env.DEV && query.has('debug') && !this.kiosk
@@ -165,8 +165,14 @@ export class Controller {
         Object.assign(this.vm, this.renderer.stats)
       }
     }
-    this.radio.update(ms, this.screen === 'game' && !this.overlay, session?.phase === 'boat',
-      session?.rescue.threat ?? 0, session?.phase === 'boat' ? session.boat.speed / 16 : Math.abs(session?.rescue.velocity ?? 0) / 14)
+    this.radio.update(ms, {
+      active: this.screen === 'game' && !this.overlay,
+      phase: session?.phase,
+      pressure: session?.rescue.threat ?? 0,
+      flightSpeed: clamp(Math.abs(session?.rescue.velocity ?? 0) / tuning.rescue.speed),
+      boatSpeed: clamp((session?.boat.speed ?? 0) / tuning.boat.speed),
+      throttle: clamp(session?.desired.throttle ?? 0),
+    })
     if (this.toast && ms > this.toast.end) this.toast = null
     if (this.dirty || ms - this.uiAt > 64 && (this.screen === 'game' || this.mode === 'hands' || this.camera === 'loading')) {
       this.dirty = false
@@ -327,7 +333,7 @@ export class Controller {
     if (!session) return
     const boat = ['boat', 'outro', 'handoff'].includes(session.phase)
     const eligible = new Set(session.rescue.survivors.filter(s => boat ? s.state === 'saved' : s.state !== 'lost').map(s => s.id))
-    this.radio.event(event, eligible)
+    this.radio.event(event, eligible, this.now, boat ? session.boat.x : 0)
     if (event.text) {
       const warning = event.type.includes('WARNING') || event.type === 'SHARK_TELEGRAPH'
       this.toast = { text: event.text, points: event.points, end: this.now + (warning ? 3900 : 2500), type: event.type }
