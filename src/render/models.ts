@@ -1,8 +1,9 @@
 import * as T from 'three'
+import { Octree } from 'three/addons/math/Octree.js'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import { clone as cloneSkeleton } from 'three/addons/utils/SkeletonUtils.js'
-import { clamp, damp, seededRandom } from '../core/math'
-import { boatSharkLength, reefScales, rockProfiles, type FloatingHazard, type ReefHazard, type RockVariant } from '../sim/boat'
+import { clamp, damp, lerp, seededRandom } from '../core/math'
+import { boatSharkLength, harbor, reefScales, rockProfiles, type FloatingHazard, type ReefHazard, type RockVariant } from '../sim/boat'
 
 // Visual lengths in scene units. Survivors, the wooden board, and the rescue deck are fixed references.
 export const MODEL_SCALES = {
@@ -11,6 +12,7 @@ export const MODEL_SCALES = {
   rescueVessel: { label: 'Rescue vessel', scale: 1, deckAnchor: [-1.95, 1.548, 0] },
   helicopter: { label: 'Helicopter', targetLength: 14.2 },
   cruiseShip: { label: 'Cruise ship', targetLength: 145 },
+  lighthouse: { label: 'Lighthouse', targetHeight: 9.2 },
   ...reefScales,
 } as const
 
@@ -22,7 +24,8 @@ export function fitModelScale(name: ScaledModel, model: T.Object3D, lengthMultip
   const length = Math.max(x, z)
   const rule = MODEL_SCALES[name]
   if (!Number.isFinite(length) || length <= 0) throw new Error(`Unable to measure ${rule.label}.`)
-  const scale = 'targetLength' in rule ? rule.targetLength * lengthMultiplier / length : rule.scale
+  const scale = 'targetHeight' in rule ? rule.targetHeight / y
+    : 'targetLength' in rule ? rule.targetLength * lengthMultiplier / length : rule.scale
   model.scale.multiplyScalar(scale)
   return { length: length * scale, width: Math.min(x, z) * scale, height: y * scale, scale }
 }
@@ -516,30 +519,292 @@ export function instanceRocks(asset: ReturnType<typeof prepareRockSet>, rocks: r
   })
 }
 
-export function lighthouse() {
-  const root = new T.Group()
-  for (let i = 0; i < 5; i++) {
-    const r = 2.7 - i * 0.28
-    const segment = mesh(root, new T.CylinderGeometry(r - 0.24, r, 3.45, 18), metal(i % 2 === 0 ? '#c1b59c' : '#95482e'), 7, 9.65 + i * 3.45, 6)
-    segment.rotation.y = 0.12
-  }
-  tube(root, dark, [7, 24.3, 6], [7, 26.4, 6], 1.57)
-  oval(root, lamp, 7, 25.65, 6, 1.45, 1.34, 1.43)
-  mesh(root, new T.ConeGeometry(2.13, 1.9, 16), dark, 7, 27.22, 6)
-  return root
+export function prepareIsland(model: T.Object3D) {
+  const size = fitModelScale('island', model)
+  const bounds = new T.Box3().setFromObject(model, true)
+  const center = bounds.getCenter(new T.Vector3())
+  model.position.add(new T.Vector3(harbor.island.x - center.x, harbor.island.baseY - bounds.min.y, -harbor.island.z - center.z))
+  return size
 }
 
-export function dock(parent: T.Object3D, z: number) {
-  for (let index = 0; index < 12; index++) {
-    box(parent, wood[index % 4], 10.3, 1.35, z + index * 1.5, 8, 0.27, 1.43)
+export function prepareLighthouse(model: T.Object3D) {
+  model.getObjectByName('pasted__pCylinder14_aiStandardSurface10_0')?.removeFromParent()
+  const size = fitModelScale('lighthouse', model)
+  const bounds = new T.Box3().setFromObject(model, true)
+  const center = bounds.getCenter(new T.Vector3())
+  const lens = model.getObjectByName('pasted__pCylinder14_aiStandardSurface2_0')
+  if (!lens) throw new Error('Lighthouse lantern assembly is missing.')
+  const lightOrigin = new T.Box3().setFromObject(lens, true).getCenter(new T.Vector3())
+  const base = new T.Vector3(center.x, bounds.min.y, center.z)
+  model.position.sub(base)
+  return { size, baseRadius: size.length / 2, lightOrigin: lightOrigin.sub(base) }
+}
+
+export function islandSurface(model: T.Object3D) {
+  const bounds = new T.Box3().setFromObject(model, true)
+  const octree = new Octree().fromGraphNode(model)
+  const ray = new T.Ray(new T.Vector3(), new T.Vector3(0, -1, 0))
+  const normal = new T.Vector3()
+  const at = (x: number, z: number) => {
+    ray.origin.set(x, bounds.max.y + 2, z)
+    const hit = octree.rayIntersect(ray)
+    return hit ? { y: hit.position.y, up: hit.triangle.getNormal(normal).y } : null
   }
-  for (let index = 0; index < 6; index++) {
-    for (const side of [-1, 1]) {
-      const x = 10.3 + side * 3.8
-      tube(parent, wood[0], [x, -1, z + index * 3.4], [x, 2.0, z + index * 3.4], 0.18)
-      if (index % 2 === 0) oval(parent, lamp, x, 2.02, z + index * 3.4, 0.12, 0.12, 0.12)
+  const terrain = model.getObjectsByProperty('isMesh', true).find((object): object is T.Mesh<T.BufferGeometry, T.MeshStandardMaterial> =>
+    object instanceof T.Mesh && object.material instanceof T.MeshStandardMaterial && !!object.material.map)
+  const map = terrain?.material.map
+  const shade = document.createElement('canvas')
+  shade.width = shade.height = 256
+  const context = shade.getContext('2d')
+  let pixels: Uint8ClampedArray | null = null
+  if (context && map?.image) {
+    context.drawImage(map.image as CanvasImageSource, 0, 0, shade.width, shade.height)
+    pixels = context.getImageData(0, 0, shade.width, shade.height).data
+  }
+  const textureRay = new T.Raycaster(new T.Vector3(), ray.direction)
+  function grassy(x: number, z: number) {
+    if (!terrain || !map || !pixels) return true
+    textureRay.ray.origin.set(x, bounds.max.y + 2, z)
+    const uv = textureRay.intersectObject(terrain, false)[0]?.uv
+    if (!uv) return false
+    map.transformUv(uv)
+    const u = clamp(Math.floor(uv.x * shade.width), 0, shade.width - 1)
+    const v = clamp(Math.floor(uv.y * shade.height), 0, shade.height - 1)
+    const i = (v * shade.width + u) * 4
+    const [red, green, blue] = [pixels[i], pixels[i + 1], pixels[i + 2]]
+    return green > red * 0.82 && blue < green * 0.82
+  }
+  return { at, bounds, grassy, dispose: () => octree.clear() }
+}
+
+type IslandSurface = ReturnType<typeof islandSurface>
+
+export function lighthouseSite(surface: IslandSurface, radius: number) {
+  const { bounds, at } = surface
+  const rim = [0.5, 1].flatMap(ring => {
+    const samples = ring === 1 ? 64 : 16
+    return Array.from({ length: samples }, (_, i) => {
+      const angle = i * 2 * Math.PI / samples
+      return [Math.cos(angle) * radius * ring, Math.sin(angle) * radius * ring] as const
+    })
+  })
+  const best: { height: number; site: { position: T.Vector3; padDepth: number } | null } =
+    { height: bounds.max.y * 0.48, site: null }
+  function visit(x: number, z: number) {
+    const center = at(x, z)
+    if (!center || center.up < 0.89 || center.y <= best.height) return
+    let min = center.y, max = center.y
+    for (const [dx, dz] of rim) {
+      const edge = at(x + dx, z + dz)
+      if (!edge || edge.up < 0.77 || edge.y < 2) return
+      min = Math.min(min, edge.y)
+      max = Math.max(max, edge.y)
+      if (max - min > 0.96) return
+    }
+    best.height = center.y
+    best.site = { position: new T.Vector3(x, max + 0.025, z), padDepth: max - min + 0.25 }
+  }
+  for (let x = bounds.min.x + radius; x < bounds.max.x - radius; x += 0.66)
+    for (let z = bounds.min.z + radius; z < bounds.max.z - radius; z += 0.66) visit(x, z)
+  if (best.site) {
+    const { x, z } = best.site.position
+    for (let dx = -0.65; dx <= 0.65; dx += 0.13)
+      for (let dz = -0.65; dz <= 0.65; dz += 0.13) visit(x + dx, z + dz)
+  }
+  return best.site
+}
+
+export function lighthouseFoundation(parent: T.Object3D, radius: number, depth: number) {
+  const pad = mesh(parent, new T.CylinderGeometry(radius, radius, depth, 24), metal('#888574', 0.94, 0),
+    0, 0.06 - depth / 2, 0)
+  pad.name = 'Lighthouse Stone Footing'
+}
+
+function fronds(palm: boolean) {
+  const positions: number[] = []
+  const indices: number[] = []
+  const random = seededRandom(palm ? 831 : 635)
+  const count = palm ? 8 : 9
+  for (let i = 0; i < count; i++) {
+    const angle = i * 2 * Math.PI / count + random() * 0.32
+    const x = Math.cos(angle), z = Math.sin(angle)
+    const reach = palm ? lerp(1.54, 2.78, random()) : lerp(0.34, 0.94, random())
+    const rise = palm ? lerp(0.28, 0.89, random()) : lerp(0.48, 1.18, random())
+    const width = palm ? lerp(0.21, 0.36, random()) : lerp(0.09, 0.19, random())
+    const start = positions.length / 3
+    for (let j = 0; j <= 4; j++) {
+      const t = j / 4
+      const bend = Math.sin(Math.PI * t)
+      const y = palm ? rise * bend - 0.75 * t * t : rise * (1.35 * t - 0.43 * t * t)
+      for (const side of [-1, 0, 1]) {
+        const w = width * bend * side
+        positions.push(x * reach * t - z * w, y + (side === 0 ? width * bend * 0.25 : 0), z * reach * t + x * w)
+      }
+      if (j < 4) {
+        const a = start + 3 * j
+        indices.push(a, a + 3, a + 1, a + 1, a + 3, a + 4, a + 1, a + 4, a + 2, a + 2, a + 4, a + 5)
+      }
     }
   }
+  const geometry = new T.BufferGeometry()
+  geometry.setAttribute('position', new T.Float32BufferAttribute(positions, 3))
+  geometry.setIndex(indices)
+  geometry.computeVertexNormals()
+  return geometry
+}
+
+export function islandPlantings(surface: IslandSurface, keepClear: T.Vector3 | null) {
+  const root = new T.Group()
+  root.name = 'Island Palms and Coastal Foliage'
+  const random = seededRandom(192)
+  const { bounds, at, grassy } = surface
+  type Plant = { x: number; y: number; z: number; scale: number; yaw: number; phase: number }
+  const palms: Plant[] = [], shrubs: Plant[] = []
+  for (const [grove, maximum, spacing, palm] of [[palms, 33, 4.2, true], [shrubs, 58, 2.1, false]] as const) {
+    for (let i = 0; i < 1000 && grove.length < maximum; i++) {
+      const x = lerp(bounds.min.x, bounds.max.x, random())
+      const z = lerp(bounds.min.z, bounds.max.z, random())
+      const hit = at(x, z)
+      if (!hit || hit.y < (palm ? 1.9 : 1.22) || hit.y > bounds.max.y * (palm ? 0.82 : 0.91) || hit.up < (palm ? 0.87 : 0.82)) continue
+      if (keepClear && Math.hypot(x - keepClear.x, z - keepClear.z) < 5.2) continue
+      if (x > harbor.pier.minX - 2 && x < harbor.pier.maxX + 2 && Math.abs(z + harbor.pier.maxZ) < 5) continue
+      if (grove.some(plant => Math.hypot(x - plant.x, z - plant.z) < spacing)) continue
+      const scale = lerp(palm ? 0.64 : 0.50, palm ? 1.26 : 1.20, random())
+      const foot = scale * (palm ? 0.21 : 0.28)
+      const support = [at(x + foot, z), at(x - foot, z), at(x, z + foot), at(x, z - foot)]
+      if (support.some(edge => !edge || Math.abs(edge.y - hit.y) > foot * 0.65)) continue
+      const slopeRadius = scale * (palm ? 0.95 : 0.45)
+      const slope = [at(x + slopeRadius, z), at(x - slopeRadius, z), at(x, z + slopeRadius), at(x, z - slopeRadius)]
+      if (slope.some(edge => !edge || Math.abs(edge.y - hit.y) > slopeRadius * 0.54) || !grassy(x, z)) continue
+      grove.push({ x, y: Math.min(hit.y, ...support.map(edge => edge!.y)) - 0.075, z, scale,
+        yaw: random() * 2 * Math.PI, phase: random() * 2 * Math.PI })
+    }
+  }
+  const tip = new T.Vector3(0.55, 4.8, 0.20)
+  const axis = new T.CatmullRomCurve3([new T.Vector3(0, -0.1, 0), new T.Vector3(0.10, 1.8, -0.06),
+    new T.Vector3(0.26, 3.4, 0.03), tip])
+  const trunk = new T.TubeGeometry(axis, 7, 0.16, 6, false)
+  const vertices = trunk.attributes.position
+  for (let row = 0; row <= 7; row++) {
+    const center = axis.getPointAt(row / 7)
+    const taper = lerp(1.3, 0.6, row / 7)
+    for (let j = 0; j <= 6; j++) {
+      const i = row * 7 + j
+      vertices.setXYZ(i, lerp(center.x, vertices.getX(i), taper), lerp(center.y, vertices.getY(i), taper),
+        lerp(center.z, vertices.getZ(i), taper))
+    }
+  }
+  trunk.computeVertexNormals()
+  const stems = new T.InstancedMesh(trunk, metal('#a88b63', 0.97, 0), palms.length)
+  const leaves = new T.MeshStandardMaterial({ color: '#ffffff', side: T.DoubleSide, roughness: 0.93 })
+  const crowns = new T.InstancedMesh(fronds(true), leaves, palms.length)
+  const scrub = new T.InstancedMesh(fronds(false), leaves, shrubs.length)
+  crowns.instanceMatrix.setUsage(T.DynamicDrawUsage)
+  crowns.frustumCulled = false
+  root.add(stems, crowns, scrub)
+  const pose = new T.Object3D(), color = new T.Color(), crown = new T.Vector3()
+  const greens = ['#527233', '#658744', '#557b39', '#72904d', '#446a44']
+  const bark = ['#c2b69a', '#b1a186', '#d6cab0']
+  function place(batch: T.InstancedMesh, grove: readonly Plant[]) {
+    grove.forEach((plant, i) => {
+      pose.position.set(plant.x, plant.y, plant.z)
+      pose.scale.setScalar(plant.scale)
+      pose.rotation.set(0, plant.yaw, 0)
+      pose.updateMatrix()
+      batch.setMatrixAt(i, pose.matrix)
+      const shades = batch === stems ? bark : greens
+      batch.setColorAt(i, color.set(shades[i % shades.length]))
+    })
+    batch.computeBoundingSphere()
+  }
+  place(stems, palms)
+  place(scrub, shrubs)
+  palms.forEach((_, i) => crowns.setColorAt(i, color.set(greens[(i + 1) % greens.length])))
+  function update(t: number, reduced: boolean) {
+    palms.forEach((plant, i) => {
+      const sway = reduced ? 0 : Math.sin(t * 1.55 + plant.phase) * 0.088
+      pose.position.copy(crown.copy(tip).multiplyScalar(plant.scale))
+      pose.position.applyAxisAngle(T.Object3D.DEFAULT_UP, plant.yaw)
+      pose.position.add(crown.set(plant.x, plant.y, plant.z))
+      pose.rotation.set(sway * 0.72, plant.yaw, sway, 'YXZ')
+      pose.scale.setScalar(plant.scale)
+      pose.updateMatrix()
+      crowns.setMatrixAt(i, pose.matrix)
+    })
+    crowns.instanceMatrix.needsUpdate = true
+  }
+  update(0, true)
+  return { root, update }
+}
+
+export function dock(parent: T.Object3D) {
+  const root = new T.Group()
+  root.name = 'Harbor Pier'
+  parent.add(root)
+  const { minX, maxX, minZ, maxZ, deckY } = harbor.pier
+  const width = maxX - minX, span = maxZ - minZ
+  const x = (minX + maxX) / 2
+  const count = Math.ceil(span / 0.82)
+  const plank = span / count
+  const head = harbor.pierHead
+  const headCount = Math.ceil((head.maxX - head.minX) / 0.82)
+  const headPlank = (head.maxX - head.minX) / headCount
+  const planks = new T.InstancedMesh(cube, metal('#ffffff', 0.92, 0.04), count + headCount)
+  const pose = new T.Object3D(), color = new T.Color()
+  for (let i = 0; i < count; i++) {
+    pose.position.set(x, deckY - 0.16, -minZ - (i + 0.5) * plank)
+    pose.scale.set(width, 0.32, plank - 0.035)
+    pose.updateMatrix()
+    planks.setMatrixAt(i, pose.matrix)
+    planks.setColorAt(i, color.copy(wood[i % wood.length].color).multiplyScalar(1.17))
+  }
+  for (let i = 0; i < headCount; i++) {
+    pose.position.set(head.minX + (i + 0.5) * headPlank, deckY - 0.16, -(head.minZ + head.maxZ) / 2)
+    pose.scale.set(headPlank - 0.035, 0.32, head.maxZ - head.minZ)
+    pose.updateMatrix()
+    planks.setMatrixAt(count + i, pose.matrix)
+    planks.setColorAt(count + i, color.copy(wood[i % wood.length].color).multiplyScalar(1.17))
+  }
+  root.add(planks)
+  const yellow = light('#ffdc77')
+  for (const edge of [minX + 0.27, maxX - 0.27]) {
+    box(root, wood[0], edge, deckY - 0.44, -(minZ + maxZ) / 2, 0.46, 0.40, span)
+    for (let z = minZ + 0.45; z < maxZ; z += 5.5) {
+      const boarding = edge < x && Math.abs(z - harbor.boardingZ) < 3
+      tube(root, wood[0], [edge, -2.8, -z], [edge, deckY + (boarding ? 0.1 : 0.84), -z], 0.23)
+      if (!boarding) {
+        box(root, dark, edge, deckY + 0.86, -z, 0.32, 0.19, 0.32)
+        box(root, yellow, edge, deckY + 1.04, -z, 0.23, 0.21, 0.23)
+        box(root, dark, edge, deckY + 1.18, -z, 0.32, 0.12, 0.32)
+      }
+    }
+  }
+  for (const z of [head.minZ + 0.25, head.maxZ - 0.25]) {
+    box(root, wood[0], (head.minX + head.maxX) / 2, deckY - 0.44, -z, head.maxX - head.minX, 0.40, 0.46)
+    for (let x = head.minX + 2; x < head.maxX; x += 5.2) {
+      tube(root, wood[0], [x, -2.8, -z], [x, deckY + 0.32, -z], 0.23)
+      box(root, yellow, x, deckY + 0.36, -z, 0.20, 0.15, 0.20)
+    }
+  }
+  const gangway = box(root, wood[3], 0, 0, 0, 1, 0.13, 1.1)
+  gangway.name = 'Port Berth Gangway'
+  gangway.visible = false
+  return { root, gangway }
+}
+
+export function mooringLights(parent: T.Object3D) {
+  const { minX, minZ, maxZ } = harbor.mooring
+  const yellow = light('#ffdf72')
+  const base = metal('#b98623')
+  return [minZ, lerp(minZ, maxZ, 0.34), lerp(minZ, maxZ, 0.67), maxZ].map(z => {
+    const buoy = new T.Group()
+    buoy.position.set(minX, 0, -z)
+    mesh(buoy, new T.CylinderGeometry(0.43, 0.56, 0.28, 9), base, 0, 0.1, 0)
+    tube(buoy, dark, [0, 0.2, 0], [0, 0.8, 0], 0.06)
+    oval(buoy, yellow, 0, 0.82, 0, 0.16, 0.18, 0.16)
+    parent.add(buoy)
+    return buoy
+  })
 }
 
 export function hazard(type: FloatingHazard['type'], radius: number) {

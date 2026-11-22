@@ -3,7 +3,8 @@ import { neutralIntent } from '../src/input/intent'
 import { pilotBot, replay, defaultAssists } from '../src/game/replay'
 import { scoreRun } from '../src/game/score'
 import { Session } from '../src/game/session'
-import { Boat, boatLungePosition, boatLungeTiming, boatSharkLength, planBoatLunge, reefContact, rockProfiles, type ReefHazard } from '../src/sim/boat'
+import { Boat, boatLungePosition, boatLungeTiming, boatSharkLength, harbor, harborContact,
+  planBoatLunge, reefContact, rockProfiles, type ReefHazard } from '../src/sim/boat'
 import { Rescue } from '../src/sim/rescue'
 import { tuning } from '../src/app/tuning'
 import { toCsv } from '../src/persistence/scores'
@@ -60,6 +61,57 @@ describe('complete run', () => {
   it('computes time and integrity points only in eligible outcomes', () => {
     expect(scoreRun(8000, 125, 95, 75, true, 'completed')).toBe(10790)
     expect(scoreRun(-3200, 150, 0, 100, false, 'failed_all_lost')).toBe(0)
+  })
+})
+
+describe('destination harbor', () => {
+  it.each([10.5, 25])('blocks the boat at the pier from x=%s and lets it steer clear', pierX => {
+    const boat = new Boat(tuning.seed, () => {})
+    boat.x = pierX
+    boat.z = harbor.pier.minZ - 7
+    boat.speed = 12
+    for (let i = 0; i < 120; i++) boat.tick(tuning.tick, { ...neutralIntent, throttle: 1 }, false)
+    expect(boat.z).toBeLessThan(harbor.pier.minZ - 4.9)
+    expect(boat.z).toBeGreaterThan(harbor.pier.minZ - 6)
+    expect(boat.done).toBeNull()
+    const stoppedX = boat.x
+    for (let i = 0; i < 120; i++) {
+      boat.tick(tuning.tick, { ...neutralIntent, steer: -1 }, false)
+      expect(harborContact(boat.x, boat.z, boat.heading)).toBe(false)
+    }
+    expect(boat.x).toBeLessThan(stoppedX - 0.15)
+  })
+
+  it('keeps the hull off the shore even when tracking is degraded', () => {
+    const boat = new Boat(tuning.seed, () => {})
+    boat.x = 0
+    boat.z = tuning.boat.length + 1
+    boat.speed = 10
+    expect(harborContact(boat.x, boat.z, boat.heading)).toBe(false)
+    expect(harborContact(boat.x, tuning.boat.length + 10, boat.heading)).toBe(true)
+    for (let i = 0; i < 240; i++) {
+      boat.tick(tuning.tick, { ...neutralIntent, trackingState: 'degraded' }, false)
+      expect(harborContact(boat.x, boat.z, boat.heading)).toBe(false)
+    }
+    expect(boat.z).toBeGreaterThan(tuning.boat.length + 2)
+    expect(boat.z).toBeLessThan(tuning.boat.length + 9)
+  })
+
+  it('finishes inside the left berth and keeps clear water outside it playable', () => {
+    const eventTypes: string[] = []
+    const boat = new Boat(tuning.seed, type => eventTypes.push(type))
+    boat.x = harbor.mooring.helmX
+    boat.z = tuning.boat.length - 0.05
+    boat.speed = 2.4
+    for (let i = 0; i < 4; i++) boat.tick(tuning.tick, { ...neutralIntent, throttle: 0 }, false)
+    expect(boat.done).toBe('landed')
+    expect(boat.smooth).toBe(true)
+    expect(eventTypes.filter(type => type === 'LANDED')).toHaveLength(1)
+    const outside = new Boat(tuning.seed, () => {})
+    outside.x = harbor.mooring.minX - 2
+    outside.z = tuning.boat.length
+    outside.tick(tuning.tick, { ...neutralIntent, throttle: 0 }, false)
+    expect(outside.done).toBeNull()
   })
 })
 

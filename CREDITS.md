@@ -42,6 +42,18 @@
 - **License** Original project asset. Separate license unspecified.
 - **Changes** Created for SHIPWRECK.
 
+## Lighthouse
+
+"[Lighthouse](https://skfb.ly/oRt9u)" by Fabio is licensed under [Creative Commons Attribution](http://creativecommons.org/licenses/by/4.0/).
+
+- **Changes** Scaled and placed on the island. Replaced the model's fixed light beam during playback.
+
+## Island
+
+Island model from BlenderKit (asset ID f1dde71a-9b17-445c-9145-ffa13844573b).
+
+- **Changes** Removed the built-in water, centered the terrain at sea level, reduced the mesh and textures, and exported with Draco compression.
+
 ## Character dialogue
 
 - **Tool** Hexgrad's Kokoro-82M v1.0, run locally with kokoro-onnx 0.6.1 and the full-precision ONNX model.

@@ -1,6 +1,6 @@
 import * as T from 'three'
 import { seededRandom } from '../core/math'
-import { boatLungeTiming } from '../sim/boat'
+import { boatLungeTiming, harbor } from '../sim/boat'
 import { waterGlsl, waveAmplitude, waveHeight } from '../sim/water'
 
 function lungeElevation(age: number) {
@@ -44,6 +44,7 @@ export type SceneUniforms = {
   search: { value: number }
   sunDirection: { value: T.Vector3 }
   shoal: { value: T.Vector4 }
+  mooring: { value: T.Vector4 }
   boardFoam: { value: T.Vector3 }
   hullFoamPose: { value: T.Vector4 }
   hullFoamSize: { value: T.Vector3 }
@@ -66,11 +67,14 @@ export interface SceneMaterials {
 }
 
 export function environmentSettings(): SceneUniforms {
+  const { minX, maxX, minZ, maxZ } = harbor.mooring
   return {
     time: { value: 0 }, dawn: { value: 0 }, flash: { value: 0 },
     fog: { value: 0.0048 }, contact: { value: new T.Vector3(-14, 0, 0) },
     search: { value: 0 }, sunDirection: { value: new T.Vector3(-0.34, 0.11, -0.93).normalize() },
-    shoal: { value: new T.Vector4(0, 0, 1, 1) }, boardFoam: { value: new T.Vector3() },
+    shoal: { value: new T.Vector4(0, 0, 1, 1) },
+    mooring: { value: new T.Vector4((minX + maxX) / 2, -(minZ + maxZ) / 2, (maxX - minX) / 2, (maxZ - minZ) / 2) },
+    boardFoam: { value: new T.Vector3() },
     hullFoamPose: { value: new T.Vector4(0, 0, 1, 0) }, hullFoamSize: { value: new T.Vector3(1, 1, 0) },
   }
 }
@@ -108,7 +112,7 @@ export function environment(scene: T.Scene): SceneEnvironment {
     fragmentShader: `
       uniform float time, dawn, flash, fog, search, crestScale;
       uniform vec3 contact, sunDirection, boardFoam, hullFoamSize;
-      uniform vec4 shoal, hullFoamPose;
+      uniform vec4 shoal, mooring, hullFoamPose;
       uniform sampler2D waterDetail;
       varying vec3 world;
       varying vec2 waveSlope;
@@ -182,6 +186,16 @@ export function environment(scene: T.Scene): SceneEnvironment {
           color += vec3(.43,.23,.075) * pool * (.3 + .7 * grain);
         }
         color = mix(color, mix(vec3(.54,.68,.70), vec3(.83,.83,.71), dawn), clamp(foam, 0., .84));
+        vec2 fromBerth = p - mooring.xy;
+        if (all(lessThan(abs(fromBerth), mooring.zw + vec2(1.4)))) {
+          float edge = boxEdge(fromBerth, mooring.zw);
+          float fill = 1. - smoothstep(-.24, .15, edge);
+          float border = 1. - smoothstep(.08, .48, abs(edge + .13));
+          float spill = exp(-abs(edge) * 3.1);
+          vec3 yellow = vec3(1., .78, .18);
+          color = mix(color, yellow, fill * (.25 + .085 * grain));
+          color += yellow * (border * (.41 + .13 * grain) + spill * .082);
+        }
         color += vec3(.2,.28,.35) * flash * (.24 + glint);
         float mist = 1. - exp(-dist * fog);
         gl_FragColor = sRGBTransferEOTF(vec4(mix(color, horizon, mist), 1.));
@@ -673,4 +687,24 @@ export function placeBeam(mesh: T.Mesh, origin: T.Vector3, target: T.Vector3) {
   const direction = origin.clone().sub(target)
   mesh.scale.y = direction.length()
   mesh.quaternion.setFromUnitVectors(new T.Vector3(0, 1, 0), direction.normalize())
+}
+
+export function lanternGlow(parent: T.Object3D, origin: T.Vector3) {
+  const canvas = document.createElement('canvas')
+  canvas.width = canvas.height = 48
+  const context = canvas.getContext('2d')!
+  const glow = context.createRadialGradient(24, 24, 0, 24, 24, 24)
+  glow.addColorStop(0, '#fff4c6')
+  glow.addColorStop(0.20, '#ffd991dd')
+  glow.addColorStop(0.53, '#ffb75059')
+  glow.addColorStop(1, '#ffb75000')
+  context.fillStyle = glow
+  context.fillRect(0, 0, 48, 48)
+  const map = new T.CanvasTexture(canvas)
+  map.colorSpace = T.SRGBColorSpace
+  const light = new T.Sprite(new T.SpriteMaterial({ map, transparent: true, depthWrite: false, blending: T.AdditiveBlending }))
+  light.name = 'Lantern Glow'
+  light.position.copy(origin)
+  light.scale.set(3.1, 3.1, 1)
+  parent.add(light)
 }

@@ -5,12 +5,13 @@ import { BloomEffect, EffectComposer, EffectPass, RenderPass, VignetteEffect } f
 import { tuning } from '../app/tuning'
 import { clamp, damp, lerp, seededRandom } from '../core/math'
 import { timelines, type Session } from '../game/session'
-import { boatLungePosition, boatLungeTiming, islandCrown, type FloatingHazard } from '../sim/boat'
+import { boatLungePosition, boatLungeTiming, harbor, type FloatingHazard } from '../sim/boat'
 import { boardBreachHeight, roster } from '../sim/rescue'
 import { waterGlsl, waveHeight } from '../sim/water'
-import { beam, boatSharkWaterline, environment, placeBeam, wreckAtmosphere, wreckDebris } from './environment'
-import { claw, cockpit, dock, fitModelScale, hazard, HelicopterModel, instanceRocks, light, lighthouse, MODEL_SCALES, person,
-  prepareCruiseWreck, prepareRockSet, raft, rescueVessel, SharkModel, wreck, type ScaledModel } from './models'
+import { beam, boatSharkWaterline, environment, lanternGlow, placeBeam, wreckAtmosphere, wreckDebris } from './environment'
+import { claw, cockpit, dock, fitModelScale, hazard, HelicopterModel, instanceRocks, islandPlantings, islandSurface,
+  light, lighthouseFoundation, lighthouseSite, MODEL_SCALES, mooringLights, person, prepareCruiseWreck, prepareIsland, prepareLighthouse,
+  prepareRockSet, raft, rescueVessel, SharkModel, wreck, type ScaledModel } from './models'
 
 export type Quality = 'low' | 'medium' | 'high'
 export interface RenderSettings { quality: Quality; reduceMotion: boolean; flashes: boolean }
@@ -276,6 +277,7 @@ export class GameRenderer {
   private readonly rescueBoat = rescueVessel()
   private vesselHelm: T.Vector3 | null = null
   private readonly driverHiddenParts: T.Object3D[] = []
+  private readonly recoveryGate: T.Object3D[] = []
   private readonly deckPassengers = new T.Group()
   private readonly deckSlots = roster.map((_, i) =>
     new T.Vector3((i % 4) * 1.07 - 1.8, 1.585 + bootClearance, 0.3 - Math.floor(i / 4) * 1.4))
@@ -288,7 +290,11 @@ export class GameRenderer {
   private nextSharkBite = 0
   private readonly rescueBeam = beam(this.scene)
   private readonly island = new T.Group()
-  private readonly tower = lighthouse()
+  private readonly tower = new T.Group()
+  private lanternOrigin: T.Vector3 | null = null
+  private plantings: ReturnType<typeof islandPlantings> | null = null
+  private readonly harborDock: ReturnType<typeof dock>
+  private readonly markerBuoys: ReturnType<typeof mooringLights>
   private readonly reefs = new T.Group()
   private rockSet: ReturnType<typeof prepareRockSet> | null = null
   private readonly lightBeam: ReturnType<typeof beam>
@@ -333,8 +339,9 @@ export class GameRenderer {
       cruiseShip: fitModelScale('cruiseShip', fallbackShip),
     }
     this.rescueBoat.add(this.deckPassengers)
-    this.env.uniforms.shoal.value.set(31, -950, 1 / 62, 1 / 50)
-    this.lightBeam = beam(this.tower, '#ffbf65')
+    this.env.uniforms.shoal.value.set(harbor.island.x, -harbor.island.z, 1 / 62, 1 / 64)
+    this.lightBeam = beam(this.tower, '#ffd788')
+    this.lightBeam.mesh.visible = false
 
     this.renderer = new T.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' })
     this.renderer.setClearColor('#1f3640')
@@ -365,7 +372,8 @@ export class GameRenderer {
     this.rope.geometry.setAttribute('position', new T.BufferAttribute(new Float32Array(21), 3))
     this.rope.frustumCulled = false
     this.boatGroup.add(this.island, this.reefs, this.obstacles)
-    dock(this.boatGroup, -901)
+    this.harborDock = dock(this.boatGroup)
+    this.markerBuoys = mooringLights(this.boatGroup)
     this.scene.add(this.rain)
     this.rain.frustumCulled = false
     this.rainPositions = new Float32Array(420 * 6)
@@ -424,6 +432,7 @@ export class GameRenderer {
         this.modelSizes.rocks = asset.referenceSize
         if (this.lastRun) this.placeReefs(this.lastRun)
       }).catch((error: unknown) => console.warn('[models] Could not load ocean-rocks.glb.', error)),
+      this.loadHarbor(loader, path),
       loader.loadAsync(path + 'rescue-vessel.glb').then(({ scene }) => {
         this.modelSizes.rescueVessel = fitModelScale('rescueVessel', scene)
         // The GLB's recovery deck is aft of its origin. Align it to the existing drop zone at full scale.
@@ -435,6 +444,8 @@ export class GameRenderer {
         this.vesselHelm = scene.localToWorld(wheelhouseEye.clone())
         scene.traverse(part => {
           if (wheelhouseOccluders.has(part.name.replace(/\d{3}$/, ''))) this.driverHiddenParts.push(part)
+          if (typeof part.userData.name === 'string' && part.userData.name.startsWith('Aft starboard guard / recovery gate closure'))
+            this.recoveryGate.push(part)
         })
         const down = new T.Vector3(0, -1, 0)
         const ray = new T.Raycaster()
@@ -457,6 +468,43 @@ export class GameRenderer {
       const { length, width, height, scale } = size
       console.info(`[models] ${MODEL_SCALES[name].label} length=${length.toFixed(2)} width=${width.toFixed(2)} height=${height.toFixed(2)} scale=${scale.toFixed(4)}`)
     }
+  }
+
+  private async loadHarbor(loader: GLTFLoader, path: string) {
+    const [terrain, tower] = await Promise.allSettled([
+      loader.loadAsync(path + 'island.glb'),
+      loader.loadAsync(path + 'lighthouse.glb'),
+    ])
+    if (terrain.status === 'rejected') {
+      console.warn('[models] Could not load island.glb.', terrain.reason)
+      return
+    }
+    const model = terrain.value.scene
+    this.modelSizes.island = prepareIsland(model)
+    this.island.add(model)
+    const surface = islandSurface(model)
+    let site: T.Vector3 | null = null
+    if (tower.status === 'fulfilled') {
+      try {
+        const art = tower.value.scene
+        const { size, baseRadius, lightOrigin } = prepareLighthouse(art)
+        const radius = baseRadius + 0.08
+        const footing = lighthouseSite(surface, radius)
+        if (!footing) throw new Error('No elevated plateau supports the lighthouse base.')
+        site = footing.position
+        this.tower.name = 'Summit Lighthouse'
+        this.tower.position.copy(site)
+        this.tower.add(art)
+        lighthouseFoundation(this.tower, radius, footing.padDepth)
+        this.island.add(this.tower)
+        this.lanternOrigin = lightOrigin
+        lanternGlow(this.tower, lightOrigin)
+        this.modelSizes.lighthouse = size
+      } catch (error) { console.warn('[models] Could not place lighthouse.glb.', error) }
+    } else console.warn('[models] Could not load lighthouse.glb.', tower.reason)
+    this.plantings = islandPlantings(surface, site)
+    this.island.add(this.plantings.root)
+    surface.dispose()
   }
 
   resize() {
@@ -502,6 +550,7 @@ export class GameRenderer {
     this.rescueBoat.visible = !firstPerson || !!this.vesselHelm
     this.deckPassengers.visible = !firstPerson
     for (const part of this.driverHiddenParts) part.visible = !firstPerson
+    for (const bar of this.recoveryGate) bar.visible = !arrival
     this.env.uniforms.time.value = t
     this.env.uniforms.dawn.value = arrival ? clamp(0.37 + run.elapsed / 15) : 0
     const flash = settings.flashes ? Math.max(0, 1 - (presentationTime % 13.42) * 5.8) * 0.72 : 0
@@ -593,18 +642,8 @@ export class GameRenderer {
     const rocks = run.boat.hazards.filter(rock => rock.type === 'reef')
     const channel = rocks.filter(rock => !rock.island && rock.z < 650)
     const approach = rocks.filter(rock => !rock.island && rock.z >= 650)
-    this.reefs.add(...instanceRocks(asset, channel), ...instanceRocks(asset, approach))
-
-    if (this.island.children.length) return
     const coast = rocks.filter(rock => rock.island)
-    const foundation = coast.find(rock => rock.variant === islandCrown.variant)!
-    this.tower.position.set(foundation.x - 7, foundation.length * islandCrown.heightPerUnit - 8.55, -foundation.z - 6)
-    this.island.add(...instanceRocks(asset, coast), this.tower)
-    const bounds = new T.Box3().setFromObject(this.island)
-    const size = bounds.getSize(new T.Vector3())
-    const center = bounds.getCenter(new T.Vector3())
-    this.modelSizes.island = { length: size.x, width: size.z, height: size.y, scale: MODEL_SCALES.island.targetLength / 100 }
-    this.env.uniforms.shoal.value.set(center.x, center.z, 1 / (size.x * 0.5 + 12), 1 / (size.z * 0.5 + 18))
+    this.reefs.add(...instanceRocks(asset, channel), ...instanceRocks(asset, approach), ...instanceRocks(asset, coast))
   }
 
   private drawRescue(run: Session, t: number, departure: boolean, reduced: boolean, dt: number) {
@@ -763,29 +802,63 @@ export class GameRenderer {
 
   private drawBoat(run: Session, t: number, arrival: boolean, reduced: boolean, dt: number) {
     const b = run.boat
+    if (b.z > 730 || arrival) {
+      this.plantings?.update(t, reduced)
+      for (const buoy of this.markerBuoys) buoy.position.y = waveHeight(buoy.position.x, buoy.position.z, t) + 0.09
+    }
+    const lantern = this.lanternOrigin
+    this.lightBeam.mesh.visible = !!lantern
+    if (lantern) {
+      const bearing = t * 0.52
+      this.beamTarget.set(lantern.x + Math.cos(bearing) * 116, lantern.y - 9, lantern.z + Math.sin(bearing) * 116)
+      placeBeam(this.lightBeam.mesh, lantern, this.beamTarget)
+      this.lightBeam.intensity.value = arrival ? 0.42 : 0.68
+    }
+    const gangway = this.harborDock.gangway
+    gangway.visible = arrival
     if (arrival) {
       const path = clamp(run.elapsed / 12)
-      this.eye.set(-18 + path * 8, 10 + path * 6, -872 - path * 7)
-      this.point.set(13, 6 + path * 5, -926)
+      const { helmX, helmZ } = harbor.mooring
+      const deckY = harbor.pier.deckY
+      this.eye.set(-20 + path * 3, 12.5 + path * 6, -862 - path * 11)
+      this.point.set(7, 4.2 + path * 2.6, -921)
       this.rescueGroup.visible = true
-      this.rescueBoat.position.set(2.8, waveHeight(2.8, -903, t), -903)
+      const bob = waveHeight(helmX, -helmZ, t) * 0.48
+      const stern = -helmZ + (this.vesselHelm?.x ?? wheelhouseEye.x)
+      this.rescueBoat.position.set(helmX, bob, stern)
       this.rescueBoat.rotation.set(0, Math.PI / 2, 0, 'XYZ')
       const visible = this.rescueGroup.children
       visible.forEach(item => { item.visible = item === this.rescueBoat || item === this.helo.root || this.people.some(p => p.root === item) })
-      this.helo.root.position.set(12 - path * 37, 18 + path * 2, -931)
+      this.helo.root.position.set(-8 - path * 40, 20 + path * 5, -929 - path * 13)
       this.helo.pose(-37 / 12, -0.054, dt, reduced)
+      const port = this.vesselHelm ? 2.65 : 1.48
+      const aboardX = helmX + port
+      const ashoreX = harbor.pier.minX + 0.66
+      const boardingZ = -harbor.boardingZ
+      const boatDeckY = R.deckY + bob
+      gangway.position.set((aboardX + ashoreX) / 2, (boatDeckY + deckY) / 2 - 0.062, boardingZ)
+      gangway.scale.x = Math.hypot(ashoreX - aboardX, deckY - boatDeckY)
+      gangway.rotation.z = Math.atan2(deckY - boatDeckY, ashoreX - aboardX)
       let disembarking = 0
       this.people.forEach(({ root, arms }, i) => {
         root.visible = run.rescue.survivors[i]?.state === 'saved'
         if (!root.visible) return
         if (root.parent !== this.rescueGroup) this.rescueGroup.add(root)
         const slot = disembarking++
-        root.position.set(9 + (slot % 2) * 2.15, 1.49, -904 - (slot * 1.65 + path * 4.7))
-        root.rotation.set(0, Math.PI, 0)
-        arms[0].rotation.z = Math.sin(t * 6 + i) * 0.48
+        const seat = this.deckSlots[i]
+        const walk = run.elapsed - (0.45 + slot * 0.49)
+        const crossDeck = smoothstep(walk, 0, 1.35)
+        const boardPier = smoothstep(walk, 1.35, 2.72)
+        const clearWay = smoothstep(walk, 2.72, 7.75)
+        const x = lerp(lerp(helmX + seat.z, aboardX, crossDeck), ashoreX, boardPier)
+        const y = lerp(lerp(bob + seat.y, boatDeckY + bootClearance, crossDeck), deckY + bootClearance, boardPier)
+        const z = lerp(stern - seat.x, boardingZ, crossDeck) - clearWay * (10.4 + (slot % 4) * 1.48)
+        root.position.set(lerp(x, 9.25 + (slot % 2) * 1.55, clearWay), y, z)
+        root.rotation.set(0, lerp(Math.PI / 2, Math.PI, smoothstep(walk, 2.55, 3.3)), 0)
+        arms[0].rotation.z = Math.sin(t * 6 + i) * (walk > 0 && walk < 7.75 ? 0.48 : 0.12)
         arms[1].rotation.z = -arms[0].rotation.z
       })
-      return 49
+      return 51
     }
     const water = waveHeight(b.x, -b.z, t)
     const shake = !reduced && b.time - b.lastImpact < 0.48 ? Math.sin(t * 75) * (0.48 - (b.time - b.lastImpact)) : 0
@@ -820,10 +893,6 @@ export class GameRenderer {
       if (age >= boatLungeTiming.bite && age <= boatLungeTiming.clear
         && !this.animatedAttacks.has(active) && this.meg.bite(0, 1.75)) this.animatedAttacks.add(active)
     }
-    const bearing = Math.sin(t * 0.91) * 110
-    const target = new T.Vector3(bearing, 24.7, 116)
-    placeBeam(this.lightBeam.mesh, new T.Vector3(7, 25.9, 6), target)
-    this.lightBeam.intensity.value = 0.44
     return 61
   }
 

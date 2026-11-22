@@ -111,14 +111,117 @@ function cycleVariants(prefix: string, rng: () => number) {
   return () => variants[index++ % variants.length]
 }
 
-export const islandCrown = { variant: 'Boulder_02', heightPerUnit: 0.3101 } as const
-const islandRocks = [
-  [8, -8, 34, islandCrown.variant], [-16, -10, 30, 'Boulder_05'], [29, -11, 25, 'Boulder_01'],
-  [-35, -2, 26, 'Reef_01'], [36, 4, 24, 'Boulder_06'], [-31, 16, 28, 'Boulder_04'],
-  [-3, 16, 34, 'Boulder_03'], [24, 17, 28, 'Reef_03'], [-11, 33, 35, 'Reef_04'],
-  [14, -23, 13, 'Reef_02'], [-21, -24, 13, 'Stone_12'], [36, -22, 12, 'Stone_13'],
-  [-42, 8, 15, 'Stone_04'], [19, 34, 22, 'Reef_01'],
-] as const satisfies readonly (readonly [number, number, number, RockVariant])[]
+const harborPier = { minX: 6.5, maxX: 14.5, minZ: 880, maxZ: 928, deckY: 1.62 } as const
+export const harbor = {
+  island: { x: 5, z: 959, baseY: -0.48 },
+  pier: harborPier,
+  // The seaward head closes the starboard approach. The boat can turn toward the open port side.
+  pierHead: { minX: harborPier.maxX, maxX: 41, minZ: harborPier.minZ, maxZ: 886 },
+  mooring: { minX: -13, maxX: harborPier.minX, minZ: 886, maxZ: 913, helmX: 2.7, helmZ: 903 },
+  boardingZ: 893.2,
+} as const
+
+type HarborPoint = readonly [x: number, z: number]
+// Waterline contour sampled from the optimized island at its 100-unit reference length.
+// Course Z points toward the island, opposite Three.js world Z.
+const islandContour = [
+  [6.62, -48.99], [5.1, -47.31], [1.99, -48.91], [0.9, -47.93],
+  [-0.54, -48.54], [-3.93, -46.17], [-7.33, -47.9], [-11.42, -43.75],
+  [-13.97, -42.84], [-12.44, -42.2], [-13.22, -40.85], [-12.29, -39.27],
+  [-14.27, -37.9], [-16.39, -38.61], [-18.54, -37.57], [-20.15, -38.72],
+  [-22.86, -37.48], [-24.5, -38.37], [-26.39, -36.11], [-25.89, -34.43],
+  [-27.15, -32.56], [-28.64, -35.47], [-32.24, -37.26], [-37.93, -33.04],
+  [-37.18, -30.84], [-39.69, -22.93], [-41.82, -21.79], [-39.68, -12.4],
+  [-46.68, -7.45], [-45.3, 5.36], [-49.08, 7.44], [-43.18, 15.68],
+  [-46.46, 22.15], [-36.33, 30.05], [-39.31, 32.82], [-46, 31.89],
+  [-49.84, 36.4], [-48.11, 44.2], [-42.87, 48.15], [-36.95, 45.45],
+  [-33.7, 46.9], [-32.37, 42.37], [-28.57, 44.48], [-24.77, 42.48],
+  [-23.2, 48.65], [-19.82, 48.55], [-18.75, 45.24], [-14.79, 48.99],
+  [-10.45, 45.63], [2.65, 46.2], [9.1, 41.61], [21.66, 48.19],
+  [25.12, 45.21], [27.72, 46.32], [29.4, 41.36], [31.24, 43.7],
+  [37.01, 43.2], [44.47, 35.96], [39.7, 31.1], [41.2, 26.83],
+  [43.59, 27.37], [41.73, 25.44], [44.58, 17.93], [44.97, 12.45],
+  [41.49, 9.48], [44.36, 9.71], [50, 2.04], [46.98, -4.72],
+  [37.59, -8.92], [36.55, -12.65], [37.03, -18.55], [39.73, -18.6],
+  [38.93, -21.7], [44.67, -26.95], [40.23, -30.1], [40.32, -32.71],
+  [44.62, -34.66], [43.45, -36], [39.96, -35.53], [41.61, -41.49],
+  [37.69, -46.34], [34.68, -45.61], [29.15, -46.77], [22.04, -43.89],
+  [20.45, -41.53], [21.85, -38.19], [18.91, -37.63], [18.39, -38.99],
+  [19.86, -39.03], [17.27, -40.99], [18.5, -42.3], [16.64, -44.67],
+  [13.13, -47.24], [11.56, -45.98], [8.67, -46.96],
+] as const
+const islandScale = reefScales.island.targetLength / 100
+const shore: HarborPoint[] = islandContour.map(([x, z]) =>
+  [harbor.island.x + x * islandScale, harbor.island.z + z * islandScale])
+const coastStart = Math.min(...shore.map(([, z]) => z))
+const { minX: pierLeft, maxX: pierRight, minZ: pierTip, maxZ: pierEnd } = harbor.pier
+const pier: HarborPoint[] = [[pierLeft, pierTip], [pierRight, pierTip], [pierRight, pierEnd], [pierLeft, pierEnd]]
+const { minX: headLeft, maxX: headRight, minZ: headTip, maxZ: headEnd } = harbor.pierHead
+const pierHead: HarborPoint[] = [[headLeft, headTip], [headRight, headTip], [headRight, headEnd], [headLeft, headEnd]]
+// The navigation point is at the helm. The stern extends much farther behind it than the bow.
+const hull: HarborPoint[] = [[-2.8, -12.5], [2.8, -12.5], [3.32, -10], [3.32, 2.25],
+  [1.52, 5.12], [-1.52, 5.12], [-3.32, 2.25], [-3.32, -10]]
+
+function insideHarborPolygon([x, z]: HarborPoint, points: readonly HarborPoint[]) {
+  let inside = false
+  for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
+    const [ax, az] = points[i], [bx, bz] = points[j]
+    if ((az > z) !== (bz > z) && x < ax + (bx - ax) * (z - az) / (bz - az)) inside = !inside
+  }
+  return inside
+}
+
+function turnAt([ax, az]: HarborPoint, [bx, bz]: HarborPoint, [cx, cz]: HarborPoint) {
+  return (bx - ax) * (cz - az) - (bz - az) * (cx - ax)
+}
+
+function harborPolygonsTouch(a: readonly HarborPoint[], b: readonly HarborPoint[]) {
+  if (insideHarborPolygon(a[0], b) || insideHarborPolygon(b[0], a)) return true
+  return a.some((from, i) => {
+    const to = a[(i + 1) % a.length]
+    const [ax, az] = from, [bx, bz] = to
+    return b.some((c, j) => {
+      const d = b[(j + 1) % b.length]
+      return Math.max(ax, bx) >= Math.min(c[0], d[0]) && Math.max(c[0], d[0]) >= Math.min(ax, bx)
+        && Math.max(az, bz) >= Math.min(c[1], d[1]) && Math.max(c[1], d[1]) >= Math.min(az, bz)
+        && turnAt(from, to, c) * turnAt(from, to, d) <= 0
+        && turnAt(c, d, from) * turnAt(c, d, to) <= 0
+    })
+  })
+}
+
+export function harborContact(x: number, z: number, heading: number) {
+  if (z < Math.min(pierTip, coastStart) - 7) return false
+  const sin = Math.sin(heading), cos = Math.cos(heading)
+  const footprint: HarborPoint[] = hull.map(([side, forward]) =>
+    [x + side * cos + forward * sin, z - side * sin + forward * cos])
+  const nose = Math.max(...footprint.map(([, pointZ]) => pointZ))
+  return (nose >= pierTip && (harborPolygonsTouch(footprint, pier) || harborPolygonsTouch(footprint, pierHead)))
+    || (nose >= coastStart && harborPolygonsTouch(footprint, shore))
+}
+
+function inMooringZone(x: number, z: number) {
+  const { minX, maxX, maxZ } = harbor.mooring
+  return z >= T.length && z <= maxZ && x >= minX && x < maxX
+}
+
+function coastalRocks() {
+  const rng = seededRandom(81)
+  const boulder = cycleVariants('Boulder_', rng)
+  const reef = cycleVariants('Reef_', rng)
+  const stone = cycleVariants('Stone_', rng)
+  const rocks: ReefHazard[] = []
+  for (const [x, z] of shore) {
+    if (z < harbor.pier.maxZ + 5 && x > harbor.mooring.minX - 7 && x < harbor.pier.maxX + 7) continue
+    if (rocks.some(rock => Math.hypot(rock.x - x, rock.z - z) < 12)) continue
+    const kind = rng()
+    const size = lerp(3.2, 8.4, rng()) * islandScale
+    // Sink the rocks into the bank and leave the mooring and pier approach clear.
+    rocks.push(rockAt(kind < 0.46 ? boulder() : kind < 0.76 ? reef() : stone(),
+      lerp(x, harbor.island.x, 0.035), lerp(z, harbor.island.z, 0.035), size, rng() * Math.PI * 2, true))
+  }
+  return rocks
+}
 
 const reefBends = [
   [350, 0], [397, 14], [441, 14], [510, -15], [548, -15], [610, 0],
@@ -225,12 +328,7 @@ function makeReefs(seed: number) {
     keepLaneClear(pieces, side, bendSide)
     rocks.push(...pieces)
   }
-  const islandRng = seededRandom(81)
-  const islandScale = reefScales.island.targetLength / 100
-  for (const [x, z, size, variant] of islandRocks) {
-    rocks.push(rockAt(variant, 31 + x * islandScale, 950 + z * islandScale,
-      size * islandScale, islandRng() * 2 * Math.PI, true))
-  }
+  rocks.push(...coastalRocks())
   return { rocks, bendSide }
 }
 
@@ -341,7 +439,8 @@ export function planBoatLunge(lunge: LungeMotion, hazards: readonly Hazard[]): L
 }
 
 export const courseLabel = (d: number) =>
-  d < 150 ? 'Open water' : d < 350 ? 'Debris field' : d < 600 ? 'Fog & reef' : d < 780 ? 'Rogue swell' : 'Island approach'
+  d < 150 ? 'Open water' : d < 350 ? 'Debris field' : d < 600 ? 'Fog & reef' : d < 780 ? 'Rogue swell'
+    : d < 860 ? 'Island approach' : 'Moor left of the pier'
 
 export class Boat {
   readonly hazards: Hazard[] = []
@@ -403,14 +502,9 @@ export class Boat {
     this.speed = approach(this.speed, speedTarget * swell, (approachZone ? 5.8 : T.accel) * dt)
     const headingAssist = assist ? clamp(-this.x * 0.024 - this.heading * 0.22, -0.15, 0.15) : 0
     this.steer = approach(this.steer, clamp(intent.steer + headingAssist, -1, 1), dt * 4.5)
-    this.heading = clamp(this.heading + this.steer * (intent.trackingState === 'ok' ? 1 : 0) * T.turn
+    const heading = clamp(this.heading + this.steer * (intent.trackingState === 'ok' ? 1 : 0) * T.turn
       * clamp(this.speed / 9, 0.25, 1) * dt, -1.12, 1.12)
-    this.x += Math.sin(this.heading) * this.speed * dt
-    this.z += Math.cos(this.heading) * this.speed * dt
-    if (Math.abs(this.x) > 39) {
-      this.x = clamp(this.x, -39, 39)
-      this.heading = -Math.sign(this.x) * 0.42
-    }
+    this.advance(dt, heading)
     this.roll = approach(this.roll, -this.steer * 0.17 + Math.sin(this.time * 2.15) * 0.036, dt * 0.7)
     if (intent.trackingState !== 'ok') return
 
@@ -423,7 +517,8 @@ export class Boat {
       const contact = obstacle.type === 'reef' ? reefContact(obstacle, this.x, this.z) : distanceSq < (obstacle.radius + boatClearance) ** 2
       if (contact) {
         obstacle.hit = true
-        this.x += this.x >= obstacle.x ? 2.8 : -2.8
+        const deflected = this.x + (this.x >= obstacle.x ? 2.8 : -2.8)
+        if (!harborContact(deflected, this.z, this.heading)) this.x = deflected
         this.damage(obstacle.type === 'reef' ? 25 : 10, obstacle.x, obstacle.type === 'reef' ? 'rock' : 'debris')
       } else if (dz > 0 && distanceSq < warningRange ** 2 && this.time - this.lastHazard > 12) {
         this.lastHazard = this.time
@@ -472,19 +567,49 @@ export class Boat {
     }
     if (!this.sighted && this.z >= 740) {
       this.sighted = true
-      this.emit('ISLAND_SIGHTED', { text: 'ISLAND AHEAD · LOWER THROTTLE' })
+      this.emit('ISLAND_SIGHTED', { text: 'ISLAND AHEAD · MOOR LEFT OF THE PIER' })
     }
     if (this.done) return
-    if (this.z >= T.length && Math.abs(this.x) <= 13) {
+    if (inMooringZone(this.x, this.z)) {
       this.smooth = this.speed <= T.landingSpeed
       if (!this.smooth) this.hull = Math.max(0, this.hull - 20)
       this.done = 'landed'
-      this.emit('LANDED', { text: this.smooth ? 'SMOOTH LANDING' : 'LANDFALL' })
+      this.emit('LANDED', { text: this.smooth ? 'SAFE MOORING' : 'MOORED · HARD LANDING' })
     }
-    if (this.z >= T.length + 10) {
-      this.z = T.length + 10
-      this.x = approach(this.x, 0, dt * 4)
+  }
+
+  private advance(dt: number, heading: number) {
+    const nextX = this.x + Math.sin(heading) * this.speed * dt
+    const x = clamp(nextX, -39, 39)
+    const z = Math.min(this.z + Math.cos(heading) * this.speed * dt, T.length + 10)
+    const turn = nextX === x ? heading : -Math.sign(x) * 0.42
+    if (!harborContact(x, z, turn)) {
+      this.x = x
+      this.z = z
+      this.heading = turn
+      return
     }
+    // Keep a clear turn at the current position and use the unobstructed axis to slide along the dock.
+    if (!harborContact(this.x, this.z, turn)) {
+      this.heading = turn
+      const slides = Math.abs(x - this.x) > z - this.z ? [[x, this.z], [this.x, z]] : [[this.x, z], [x, this.z]]
+      const slide = slides.find(([sx, sz]) => (sx !== this.x || sz !== this.z) && !harborContact(sx, sz, turn))
+      if (slide) {
+        this.x = slide[0]
+        this.z = slide[1]
+        this.speed *= Math.exp(-3.4 * dt)
+        return
+      }
+    }
+    // Recoil slightly from a head-on stop so the bow has room to swing away.
+    const backX = clamp(this.x - 0.32 * Math.sin(this.heading), -39, 39)
+    const backZ = this.z - 0.32 * Math.cos(this.heading)
+    if (!harborContact(backX, backZ, turn)) {
+      this.x = backX
+      this.z = backZ
+      this.heading = turn
+    }
+    this.speed = 0
   }
 
   private damage(amount: number, x: number, impact: NonNullable<GameEvent['impact']>) {
