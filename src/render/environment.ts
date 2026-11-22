@@ -394,50 +394,245 @@ export function wreckAtmosphere() {
   smoke.renderOrder = 2
   flame.renderOrder = 3
 
-  const fragment = new T.Shape([
-    new T.Vector2(-0.53, -0.37), new T.Vector2(0.38, -0.46), new T.Vector2(0.48, -0.19),
-    new T.Vector2(0.24, -0.05), new T.Vector2(0.51, 0.28), new T.Vector2(-0.39, 0.39),
-    new T.Vector2(-0.31, 0.11),
-  ])
-  const debrisPieces = Array.from({ length: 12 }, (_, i) => ({
-    x: -55 + i * 9.8 + random() * 6,
-    z: 20 + random() * 19,
-    heading: random() * Math.PI * 2,
-    drift: random() * Math.PI * 2,
-    length: 1.15 + random() ** 2 * 3.3,
-    width: 0.48 + random() * 1.47,
-  }))
-  const debris = new T.InstancedMesh(new T.ExtrudeGeometry(fragment, {
-    depth: 0.18, bevelEnabled: false,
-  }).rotateX(-Math.PI / 2), new T.MeshStandardMaterial({ roughness: 0.86, metalness: 0.18 }), debrisPieces.length)
-  const debrisColors = ['#654a37', '#374346', '#74766e', '#4c4641']
-  debrisPieces.forEach((_, i) => debris.setColorAt(i, new T.Color(debrisColors[i % debrisColors.length])))
-  debris.instanceMatrix.setUsage(T.DynamicDrawUsage)
-  debris.frustumCulled = false
-  const fragmentPose = new T.Object3D()
-  root.add(smoke, flame, debris)
+  root.add(smoke, flame)
 
   function update(ship: T.Object3D, t: number, reduced: boolean, lowQuality: boolean) {
     fireSites.forEach((site, i) => deckOrigins[i].copy(site).applyMatrix4(ship.matrixWorld))
     uniforms.time.value = reduced ? t * 0.38 : t
     smoke.geometry.instanceCount = (lowQuality ? 7 : 10) * fireSites.length
-    debris.count = lowQuality ? 8 : debrisPieces.length
-    for (let i = 0; i < debris.count; i++) {
-      const piece = debrisPieces[i]
-      const sway = t * (reduced ? 0.19 : 0.42) + piece.drift
-      const x = ship.position.x + piece.x + Math.sin(sway) * 1.7
-      const z = ship.position.z + piece.z + Math.cos(sway * 0.81) * 1.4
-      const water = waveHeight(x, z, t)
-      fragmentPose.position.set(x, water + 0.015, z)
-      fragmentPose.rotation.set(
-        waveHeight(x, z + 0.5, t) - waveHeight(x, z - 0.5, t),
-        piece.heading + Math.sin(sway) * 0.22,
-        waveHeight(x + 0.5, z, t) - waveHeight(x - 0.5, z, t), 'XYZ')
-      fragmentPose.scale.set(piece.length, 1, piece.width)
-      fragmentPose.updateMatrix()
-      debris.setMatrixAt(i, fragmentPose.matrix)
+  }
+  return { root, update }
+}
+
+function debrisSlab(outline: [number, number][], depth: number, fold = 0) {
+  const shape = new T.Shape(outline.map(([x, z]) => new T.Vector2(x, -z)))
+  const geometry = new T.ExtrudeGeometry(shape, { depth, bevelEnabled: false })
+    .rotateX(-Math.PI / 2).translate(0, -depth / 2, 0)
+  geometry.computeBoundingBox()
+  const bounds = geometry.boundingBox!
+  const size = bounds.getSize(new T.Vector3())
+  const { position, uv } = geometry.attributes
+  for (let i = 0; i < position.count; i++) {
+    const u = (position.getX(i) - bounds.min.x) / size.x
+    const v = (position.getZ(i) - bounds.min.z) / size.z
+    uv.setXY(i, u, 1 - v)
+    position.setY(i, position.getY(i) + fold * Math.sin(Math.PI * u) * (1 - 1.4 * v))
+  }
+  geometry.computeVertexNormals()
+  return geometry
+}
+
+function debrisLathe(profile: [number, number][], horizontal = true) {
+  const geometry = new T.LatheGeometry(profile.map(([y, radius]) => new T.Vector2(radius, y)), 10)
+  return horizontal ? geometry.rotateZ(-Math.PI / 2) : geometry
+}
+
+type DebrisPaint = (ctx: CanvasRenderingContext2D, random: () => number) => void
+
+function debrisTexture(base: string, paint: DebrisPaint) {
+  const canvas = document.createElement('canvas')
+  canvas.width = canvas.height = 64
+  const ctx = canvas.getContext('2d')!
+  const random = seededRandom(615)
+  ctx.fillStyle = base
+  ctx.fillRect(0, 0, 64, 64)
+  paint(ctx, random)
+  // Break up each surface with chips, scratches and sun-faded spots.
+  for (let i = 0; i < 150; i++) {
+    ctx.fillStyle = i % 3 === 0 ? '#fff2c733' : '#211d182f'
+    ctx.fillRect(random() * 64, random() * 64, 1 + random() * 4, 1 + random() * 2)
+  }
+  const texture = new T.CanvasTexture(canvas)
+  texture.colorSpace = T.SRGBColorSpace
+  return texture
+}
+
+const woodGrain: DebrisPaint = (ctx, random) => {
+  for (let i = 0; i < 38; i++) {
+    const x = random() * 64 - 18
+    const y = random() * 64
+    ctx.strokeStyle = i % 3 === 0 ? '#e1ac75aa' : '#3a251977'
+    ctx.beginPath()
+    ctx.moveTo(x, y)
+    ctx.bezierCurveTo(x + 16, y + 4, x + 22, y - 5, x + 49, y + 1)
+    ctx.stroke()
+  }
+}
+
+function wreckDebrisTypes() {
+  // Counts for the wreck and board fields. Float offset places the mesh center above or below the waves.
+  function type(name: string, geometry: T.BufferGeometry, base: string, paint: DebrisPaint,
+    wreckCount: number, boardCount: number, floatOffset = 0) {
+    return { name, geometry, material: new T.MeshStandardMaterial({ map: debrisTexture(base, paint), roughness: 0.83 }),
+      wreckCount, boardCount, floatOffset }
+  }
+  return [
+    type('Broken planks', debrisSlab([[-1.65,-.24], [1.53,-.22], [1.23,-.05], [1.64,.12],
+      [1.19,.22], [-1.53,.21], [-1.24,.04]], .14), '#9a6c45', woodGrain, 9, 8, .035),
+    type('Splintered timbers', debrisSlab([[-1.35,-.38], [1.01,-.4], [1.41,-.22], [.95,-.04],
+      [1.49,.09], [.85,.38], [-1.35,.32], [-1.11,.04]], .32), '#75492e', woodGrain, 8, 3),
+    type('Crates', new T.BoxGeometry(1.43, .82, 1.15), '#937043', (ctx, random) => {
+      ctx.fillStyle = '#513b27'
+      for (const x of [13, 26, 39, 52]) ctx.fillRect(x, 0, 2, 64)
+      ctx.fillStyle = '#c09561'
+      ctx.fillRect(0, 4, 64, 7)
+      ctx.fillRect(0, 54, 64, 7)
+      woodGrain(ctx, random)
+      ctx.fillStyle = '#433732'
+      for (const x of [6, 57]) for (const y of [6, 56]) ctx.fillRect(x, y, 2, 3)
+    }, 2, 1, -.09),
+    type('Barrels', debrisLathe([[-.69,0], [-.69,.45], [-.56,.49], [0,.54], [.56,.49], [.69,.45], [.69,0]]),
+      '#875148', ctx => {
+        ctx.fillStyle = '#403b37'
+        for (const y of [10, 44]) ctx.fillRect(0, y, 64, 9)
+        ctx.fillStyle = '#b4a18a'
+        for (const y of [10, 44]) ctx.fillRect(0, y, 64, 2)
+        ctx.fillRect(15, 23, 18, 13)
+      }, 1, 1, -.14),
+    type('Suitcases', debrisSlab([[-.71,-.44], [.65,-.44], [.74,-.34], [.74,.33], [.64,.44],
+      [-.64,.44], [-.74,.32], [-.74,-.33]], .35), '#55526a', ctx => {
+      ctx.fillStyle = '#aba1a94d'
+      for (let y = 0; y < 64; y += 3) ctx.fillRect(0, y, 64, 1)
+      ctx.strokeStyle = '#2b2221'
+      ctx.strokeRect(3, 3, 58, 58)
+      for (const x of [12, 46]) {
+        ctx.fillStyle = '#644334'
+        ctx.fillRect(x, 0, 7, 64)
+        ctx.fillStyle = '#c2aa79'
+        ctx.strokeStyle = '#c2aa79'
+        ctx.strokeRect(x - 1, 36, 9, 7)
+        ctx.fillRect(x + 3, 37, 1, 5)
+      }
+      ctx.fillStyle = '#d9be8f'
+      ctx.fillRect(35, 10, 11, 7)
+    }, 2, 0, -.03),
+    type('Cans', debrisLathe([[-.27,0], [-.27,.19], [-.22,.19], [.22,.19], [.27,.19], [.27,0]]),
+      '#a84d40', ctx => {
+        ctx.fillStyle = '#bbbdb1'
+        ctx.fillRect(0, 0, 64, 15)
+        ctx.fillRect(0, 49, 64, 15)
+        ctx.fillStyle = '#f4dfb7'
+        ctx.fillRect(8, 23, 42, 9)
+      }, 2, 1, -.035),
+    type('Buoys', debrisLathe([[-.38,0], [-.37,.19], [-.17,.37], [.16,.39], [.38,.24], [.49,.11], [.49,0]], false),
+      '#c86a2d', ctx => {
+        ctx.fillStyle = '#dcd6ad'
+        ctx.fillRect(0, 25, 64, 14)
+        ctx.fillStyle = '#59402b'
+        ctx.fillRect(18, 29, 7, 7)
+        ctx.fillRect(33, 29, 10, 7)
+      }, 1, 1, -.10),
+    type('Crumpled bags', debrisSlab([[-.47,-.25], [-.04,-.36], [.25,-.29], [.46,-.07], [.28,.32],
+      [-.06,.26], [-.45,.33], [-.34,.06]], .075, .18), '#b6c6b7', ctx => {
+      ctx.strokeStyle = '#677f7a'
+      ctx.lineWidth = 2
+      ctx.beginPath()
+      ctx.moveTo(2, 39)
+      ctx.lineTo(27, 19)
+      ctx.lineTo(34, 36)
+      ctx.lineTo(58, 25)
+      ctx.stroke()
+      ctx.fillStyle = '#6a937b'
+      ctx.fillRect(21, 39, 29, 6)
+    }, 2, 1, .025),
+    type('Bottles', debrisLathe([[-.45,0], [-.45,.15], [-.35,.16], [.11,.16], [.25,.075], [.40,.075],
+      [.40,.094], [.47,.094], [.47,0]]), '#719e8b', ctx => {
+      ctx.fillStyle = '#b2c79e'
+      ctx.fillRect(0, 31, 64, 21)
+      ctx.fillStyle = '#385b72'
+      ctx.fillRect(0, 0, 64, 16)
+      ctx.fillRect(7, 40, 42, 4)
+    }, 2, 1, -.005),
+    type('Wrappers', debrisSlab([[-.34,-.25], [.06,-.19], [.34,-.24], [.27,.09], [.34,.24],
+      [-.06,.19], [-.34,.22], [-.26,-.06]], .035, .105), '#b78445', ctx => {
+      ctx.fillStyle = '#855041'
+      ctx.fillRect(0, 0, 10, 64)
+      ctx.fillRect(54, 0, 10, 64)
+      ctx.fillStyle = '#ead9a9'
+      ctx.fillRect(15, 22, 34, 16)
+      ctx.fillRect(23, 43, 21, 3)
+    }, 1, 1, .045),
+    type('Loose scraps', debrisSlab([[-.36,-.22], [-.03,-.31], [.35,-.16], [.16,-.02], [.31,.15],
+      [.03,.28], [-.34,.14]], .035, .095), '#cfc4a6', ctx => {
+      ctx.fillStyle = '#827d71'
+      for (let y = 15; y < 55; y += 7) ctx.fillRect(12, y, y % 2 ? 32 : 23, 2)
+    }, 1, 2, .045),
+  ]
+}
+
+export function wreckDebris() {
+  const root = new T.Group()
+  root.name = 'Floating wreck debris'
+  const random = seededRandom(200)
+  type Field = 'wreck' | 'board'
+  const used: Record<Field, { x: number; z: number; radius: number }[]> = { wreck: [], board: [] }
+
+  function scatter(count: number, field: Field, radius: number) {
+    const sites = used[field]
+    const nearWreck = field === 'wreck'
+    return Array.from({ length: count }, (_, i) => {
+      const size = 0.64 + random() * 0.58
+      const footprint = radius * size
+      let spot = { x: 0, z: 0, radius: footprint }
+      let bestGap = -Infinity
+      // Give pieces a little clearance from each other and leave the pickup area open.
+      for (let attempt = 0; attempt < 8; attempt++) {
+        const x = nearWreck ? -38 + random() * 77 : -23 + random() * 49
+        const z = nearWreck ? 24 + random() * 15 : (7 + random() * 11) * (i % 2 ? 1 : -1)
+        const gap = sites.reduce((min, site) => Math.min(min,
+          Math.hypot(x - site.x, z - site.z) - footprint - site.radius), Infinity)
+        if (gap > bestGap) {
+          bestGap = gap
+          spot = { x, z, radius: footprint }
+        }
+      }
+      sites.push(spot)
+      return { ...spot, field, size, heading: random() * Math.PI * 2, sway: random() * Math.PI * 2,
+        low: i < Math.ceil(count * 0.58), tint: 0.81 + random() * 0.28 }
+    })
+  }
+
+  const batches = wreckDebrisTypes().map(({ name, geometry, material, wreckCount, boardCount, floatOffset }) => {
+    geometry.computeBoundingSphere()
+    const radius = geometry.boundingSphere!.radius
+    const pieces = [...scatter(wreckCount, 'wreck', radius), ...scatter(boardCount, 'board', radius)]
+      .sort((a, b) => Number(b.low) - Number(a.low))
+    const mesh = new T.InstancedMesh(geometry, material, pieces.length)
+    mesh.name = name
+    mesh.frustumCulled = false
+    mesh.instanceMatrix.setUsage(T.DynamicDrawUsage)
+    const color = new T.Color()
+    pieces.forEach((piece, i) => mesh.setColorAt(i, color.setRGB(piece.tint, piece.tint, piece.tint)))
+    root.add(mesh)
+    return { mesh, pieces, lowCount: pieces.filter(piece => piece.low).length, floatOffset }
+  })
+  const pose = new T.Object3D()
+  const up = new T.Vector3(0, 1, 0)
+  const normal = new T.Vector3()
+  const yaw = new T.Quaternion()
+  const slope = { x: 0, z: 0 }
+
+  function update(ship: T.Vector3, board: T.Vector3, t: number, reduced: boolean, lowQuality: boolean) {
+    const anchors = { wreck: ship, board }
+    for (const { mesh, pieces, lowCount, floatOffset } of batches) {
+      mesh.count = lowQuality ? lowCount : pieces.length
+      for (let i = 0; i < mesh.count; i++) {
+        const piece = pieces[i]
+        const anchor = anchors[piece.field]
+        const sway = t * (reduced ? 0.14 : 0.35) + piece.sway
+        const x = anchor.x + piece.x + Math.sin(sway) * 0.74
+        const z = anchor.z + piece.z + Math.cos(sway * 0.83) * 0.58
+        const height = waveHeight(x, z, t, slope)
+        pose.position.set(x, height + floatOffset * piece.size, z)
+        normal.set(-slope.x, 1, -slope.z).normalize()
+        yaw.setFromAxisAngle(up, piece.heading + Math.sin(sway) * 0.22)
+        pose.quaternion.setFromUnitVectors(up, normal).multiply(yaw)
+        pose.scale.setScalar(piece.size)
+        pose.updateMatrix()
+        mesh.setMatrixAt(i, pose.matrix)
+      }
+      mesh.instanceMatrix.needsUpdate = true
     }
-    debris.instanceMatrix.needsUpdate = true
   }
   return { root, update }
 }

@@ -8,7 +8,7 @@ import { timelines, type Session } from '../game/session'
 import { boatLungePosition, boatLungeTiming, islandCrown, type FloatingHazard } from '../sim/boat'
 import { roster } from '../sim/rescue'
 import { waterGlsl, waveHeight } from '../sim/water'
-import { beam, boatSharkWaterline, environment, placeBeam, wreckAtmosphere } from './environment'
+import { beam, boatSharkWaterline, environment, placeBeam, wreckAtmosphere, wreckDebris } from './environment'
 import { claw, cockpit, dock, fitModelScale, hazard, HelicopterModel, instanceRocks, light, lighthouse, MODEL_SCALES, person,
   prepareCruiseWreck, prepareRockSet, raft, rescueVessel, SharkModel, wreck, type ScaledModel } from './models'
 
@@ -277,6 +277,7 @@ export class GameRenderer {
   private readonly shipFromWorld = new T.Matrix4()
   private readonly wreckWater = wreckFoam()
   private readonly wreckEffects = wreckAtmosphere()
+  private readonly floatingDebris = wreckDebris()
   private wreckLoaded = false
   private readonly rescueBoat = rescueVessel()
   private vesselHelm: T.Vector3 | null = null
@@ -363,7 +364,7 @@ export class GameRenderer {
     this.flashLight.position.set(41, 58, -12)
     this.camera.add(this.cabin.root)
     this.rescueGroup.add(this.helo.root, this.picker.root, this.raft.root, this.ship, this.rescueBoat, this.rope,
-      this.wreckEffects.root, this.wreckWater.mesh, this.marker, this.schoolBuoy,
+      this.wreckEffects.root, this.wreckWater.mesh, this.floatingDebris.root, this.marker, this.schoolBuoy,
       ...this.people.map(p => p.root), ...this.peopleMarkers, ...this.sharks.map(s => s.root))
     this.raft.root.position.x = -32
     this.rescueBoat.position.x = R.deploy
@@ -627,12 +628,15 @@ export class GameRenderer {
     this.ship.position.set(wreckX, lerp(0.6, -7, sink) + waveHeight(wreckX, wreckZ, t) * 0.22, wreckZ)
     this.ship.rotation.set(lerp(0.42, 0.77, sink), -0.11, lerp(-0.04, -0.12, sink), 'YXZ')
     const showWreckEffects = this.wreckLoaded && !practice
+    const lowQuality = this.quality === 'low'
     this.wreckEffects.root.visible = this.wreckWater.mesh.visible = showWreckEffects
+    this.floatingDebris.root.visible = !practice
+    if (!practice) this.floatingDebris.update(this.ship.position, this.raft.root.position, t, reduced, lowQuality)
     if (showWreckEffects) {
       this.ship.updateWorldMatrix(true, false)
       this.shipFromWorld.copy(this.ship.matrixWorld).invert()
       this.wreckWater.update(this.ship, t, sink)
-      this.wreckEffects.update(this.ship, t, reduced, this.quality === 'low')
+      this.wreckEffects.update(this.ship, t, reduced, lowQuality)
     }
     if (inIntro) {
       this.eye.set(lerp(-58, -25, sink), lerp(27, 21, sink), lerp(88, 70, sink) + spread)

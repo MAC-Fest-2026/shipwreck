@@ -9,11 +9,28 @@ export const waves = [
 
 export const waveAmplitude = waves.reduce((sum, [, , amplitude]) => sum + Math.abs(amplitude), 0)
 
+export interface WaveSlope {
+  x: number
+  z: number
+}
+
 // Height-field form of Gerstner. CPU queries use world X/Z directly.
-export function waveHeight(x: number, z: number, t: number) {
+export function waveHeight(x: number, z: number, t: number, slope?: WaveSlope) {
   let height = 0
+  let slopeX = 0
+  let slopeZ = 0
   for (const [dx, dz, amplitude, k, w] of waves) {
-    height += amplitude * Math.sin((dx * x + dz * z) * k - w * t)
+    const phase = (dx * x + dz * z) * k - w * t
+    height += amplitude * Math.sin(phase)
+    if (slope) {
+      const gradient = amplitude * k * Math.cos(phase)
+      slopeX += gradient * dx
+      slopeZ += gradient * dz
+    }
+  }
+  if (slope) {
+    slope.x = slopeX
+    slope.z = slopeZ
   }
   return height
 }
