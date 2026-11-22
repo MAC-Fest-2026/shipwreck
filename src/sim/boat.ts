@@ -1,7 +1,7 @@
 import { tuning } from '../app/tuning'
 import { approach, clamp, lerp, seededRandom } from '../core/math'
 import type { ControlIntent } from '../input/intent'
-import type { Emit, GameEvent } from '../game/events'
+import type { BoatSharkKind, Emit, GameEvent } from '../game/events'
 import { waveHeight } from './water'
 
 const T = tuning.boat
@@ -342,16 +342,23 @@ function makeReefs(seed: number) {
   return { rocks, bendSide }
 }
 
-interface BoatLunge {
+export interface BoatLunge {
+  shark: BoatSharkKind
   courseZ: number; side: -1 | 1; time: number; ended: boolean
   x: number; targetZ: number; vx: number; vz: number
   curve?: LungeCurve
 }
 
-export const boatLungeTiming = { bite: 2.55, strike: 3.1, clear: 3.65, end: 5 } as const
+export const boatLungeTiming = {
+  rise: 1.62, breach: 2.02, bite: 2.55, apex: 2.7, strike: 3.1, clear: 3.65, splashdown: 3.81, end: 5,
+} as const
 export const boatSharkLength = 21.39
-const sharkTailReach = boatSharkLength * 1.1
-const sharkClearance = boatSharkLength * 0.29 + 0.65
+export const regularSharkLength = 6.2
+const sharkLunge = {
+  regularShark: { length: regularSharkLength, flank: 18, hitRadius: 3.4, damage: 15, depth: 0.24, apex: 1.65, dive: 3.4 },
+  megalodon: { length: boatSharkLength, flank: 22, hitRadius: 4.5, damage: 35, depth: 1.6, apex: 4.25, dive: 8.25 },
+} satisfies Record<BoatSharkKind, Record<string, number>>
+
 const lungeKnots = [0, 1.45, boatLungeTiming.strike, 4.12, boatLungeTiming.end]
 type LungeCurve = { offsets: readonly number[]; slopes: readonly number[] }
 type LungeMotion = Pick<BoatLunge, 'x' | 'targetZ' | 'vx' | 'vz' | 'curve'>
@@ -375,9 +382,38 @@ export function boatLungePosition(lunge: LungeMotion, age: number) {
   return { x: x - lateral * vz / speed, z: z + lateral * vx / speed, vx: vx - rate * vz / speed, vz: vz + rate * vx / speed }
 }
 
+function breachHeight(shark: BoatSharkKind, age: number) {
+  const { rise, apex: peakTime, splashdown, end } = boatLungeTiming
+  const { depth, apex, dive } = sharkLunge[shark]
+  const ease = (from: number, to: number) => {
+    const u = clamp((age - from) / (to - from))
+    return u * u * (3 - 2 * u)
+  }
+  return -depth + (depth + apex) * (ease(rise, peakTime) - ease(peakTime, splashdown))
+    - dive * ease(splashdown, end)
+}
+
+// The bite path gives the snout. The GLB pivots nearer the dorsal fin and faces +Z.
+export function boatSharkPose(lunge: BoatLunge, time: number) {
+  const age = time - lunge.time
+  const snout = boatLungePosition(lunge, age)
+  const speed = Math.hypot(snout.vx, snout.vz)
+  const forwardX = snout.vx / speed, forwardZ = -snout.vz / speed
+  const offset = sharkLunge[lunge.shark].length * 0.44
+  const centerX = snout.x - forwardX * offset, centerZ = -snout.z - forwardZ * offset
+  const dt = 0.01
+  const heightAt = (delta: number) => waveHeight(centerX + snout.vx * delta, centerZ - snout.vz * delta, time + delta)
+    + breachHeight(lunge.shark, age + delta)
+  const verticalSpeed = (heightAt(dt) - heightAt(-dt)) / (2 * dt)
+  const pitch = clamp(-Math.atan2(verticalSpeed, speed), -0.5, 0.62)
+  const x = snout.x - forwardX * offset * Math.cos(pitch), z = -snout.z - forwardZ * offset * Math.cos(pitch)
+  return { x, z, y: waveHeight(x, z, time) + breachHeight(lunge.shark, age),
+    pitch, yaw: Math.atan2(forwardX, forwardZ), forwardX, forwardZ }
+}
+
 // Intersect the snout-to-tail span with the same convex footprint the boat uses, inflated by the shark's beam.
-function sharkTouchesReef(rock: ReefHazard, noseX: number, noseZ: number, tailX: number, tailZ: number) {
-  const reach = rock.radius + sharkClearance * contactMarginScale
+function sharkTouchesReef(rock: ReefHazard, noseX: number, noseZ: number, tailX: number, tailZ: number, clearance: number) {
+  const reach = rock.radius + clearance * contactMarginScale
   if (rock.x < Math.min(noseX, tailX) - reach || rock.x > Math.max(noseX, tailX) + reach
     || rock.z < Math.min(noseZ, tailZ) - reach || rock.z > Math.max(noseZ, tailZ) + reach) return false
   const cos = Math.cos(rock.yaw), sin = Math.sin(rock.yaw)
@@ -387,7 +423,7 @@ function sharkTouchesReef(rock: ReefHazard, noseX: number, noseZ: number, tailX:
   let enter = 0, leave = 1
   for (let i = 0; i < contactNormals.length; i++) {
     const [nx, nz] = contactNormals[i]
-    const edge = rock.profile[i + 4] * rock.length + sharkClearance
+    const edge = rock.profile[i + 4] * rock.length + clearance
     const a = x1 * nx + z1 * nz - edge, b = x2 * nx + z2 * nz - edge
     if (a > 0 && b > 0) return false
     if (a > 0) enter = Math.max(enter, a / (a - b))
@@ -397,7 +433,7 @@ function sharkTouchesReef(rock: ReefHazard, noseX: number, noseZ: number, tailX:
   return true
 }
 
-function clearLunge(lunge: LungeMotion, rocks: readonly ReefHazard[]) {
+function clearLunge(lunge: LungeMotion, rocks: readonly ReefHazard[], tailReach: number, clearance: number) {
   // The extra clearance covers motion between samples and the tail swing in the clip.
   const samples = 125
   const step = boatLungeTiming.end / samples
@@ -408,7 +444,8 @@ function clearLunge(lunge: LungeMotion, rocks: readonly ReefHazard[]) {
     const speed = Math.hypot(vx, vz)
     const dx = vx / speed, dz = vz / speed
     if (i > 0 && forwardX * dx + forwardZ * dz < turnLimit) return false
-    if (rocks.some(rock => sharkTouchesReef(rock, x + dx * .8, z + dz * .8, x - dx * sharkTailReach, z - dz * sharkTailReach))) return false
+    if (rocks.some(rock => sharkTouchesReef(rock, x + dx * .8, z + dz * .8,
+      x - dx * tailReach, z - dz * tailReach, clearance))) return false
     forwardX = dx
     forwardZ = dz
   }
@@ -423,12 +460,14 @@ const lungeBends = [
 const lungeShifts = [0, 4, -4, 9, -9, 16, -16, 26, -26, 38, -38, 50, -50]
 const maxLateralReach = Math.max(...lungeShifts) + 2 * Math.max(...lungeBends.flat().map(Math.abs))
 
-export function planBoatLunge(lunge: LungeMotion, hazards: readonly Hazard[]): LungeMotion | null {
+export function planBoatLunge(lunge: LungeMotion, hazards: readonly Hazard[], length = boatSharkLength): LungeMotion | null {
+  const tailReach = length * 1.1
+  const clearance = length * 0.29 + 0.65
   const longitudinalReach = Math.hypot(lunge.vx, lunge.vz) * boatLungeTiming.strike
-  const reach = Math.hypot(longitudinalReach, maxLateralReach) + sharkTailReach + 1 + sharkClearance * contactMarginScale
+  const reach = Math.hypot(longitudinalReach, maxLateralReach) + tailReach + 1 + clearance * contactMarginScale
   const rocks = hazards.filter((h): h is ReefHazard => h.type === 'reef'
     && Math.abs(h.x - lunge.x) < reach + h.radius && Math.abs(h.z - lunge.targetZ) < reach + h.radius)
-  if (!rocks.length || clearLunge(lunge, rocks)) return lunge
+  if (!rocks.length || clearLunge(lunge, rocks, tailReach, clearance)) return lunge
 
   // Prefer a bend that still reaches the original strike point. If it is occupied, the shark veers past it.
   for (const shift of lungeShifts) {
@@ -437,13 +476,13 @@ export function planBoatLunge(lunge: LungeMotion, hazards: readonly Hazard[]): L
       const slopes = offsets.map((_, i) => i === 0 || i === offsets.length - 1 ? 0
         : (offsets[i + 1] - offsets[i - 1]) / (lungeKnots[i + 1] - lungeKnots[i - 1]))
       const pass = { ...lunge, curve: { offsets, slopes } }
-      if (clearLunge(pass, rocks)) return pass
+      if (clearLunge(pass, rocks, tailReach, clearance)) return pass
     }
   }
   // If a reef is too tight for a turn at this speed, a displaced pass is safer than diving through it.
   for (const shift of lungeShifts.slice(1)) {
     const pass = { ...lunge, curve: { offsets: lungeKnots.map(() => shift), slopes: lungeKnots.map(() => 0) } }
-    if (clearLunge(pass, rocks)) return pass
+    if (clearLunge(pass, rocks, tailReach, clearance)) return pass
   }
   return null
 }
@@ -457,8 +496,10 @@ export class Boat {
   private readonly hazardReach: number
   private readonly bendSide: number
   readonly lunges: BoatLunge[] = [
-    { courseZ: 455, side: -1, time: -1, ended: false, x: 0, targetZ: 0, vx: 0, vz: 0 },
-    { courseZ: 689, side: 1, time: -1, ended: false, x: 0, targetZ: 0, vx: 0, vz: 0 },
+    { shark: 'regularShark', courseZ: 132, side: -1, time: -1, ended: false, x: 0, targetZ: 0, vx: 0, vz: 0 },
+    { shark: 'regularShark', courseZ: 302, side: 1, time: -1, ended: false, x: 0, targetZ: 0, vx: 0, vz: 0 },
+    { shark: 'megalodon', courseZ: 455, side: -1, time: -1, ended: false, x: 0, targetZ: 0, vx: 0, vz: 0 },
+    { shark: 'megalodon', courseZ: 689, side: 1, time: -1, ended: false, x: 0, targetZ: 0, vx: 0, vz: 0 },
   ]
   x = 0
   z = 0
@@ -531,7 +572,10 @@ export class Boat {
       * clamp(this.speed / 9, 0.25, 1) * dt, -1.12, 1.12)
     this.advance(dt, heading)
     this.bank = approach(this.bank, this.steer * 0.17, dt * 0.7)
-    if (intent.trackingState !== 'ok') return
+    if (intent.trackingState !== 'ok') {
+      this.updateLunges(previousTime, false)
+      return
+    }
 
     for (const obstacle of this.hazards) {
       const dz = obstacle.z - this.z
@@ -551,45 +595,7 @@ export class Boat {
       }
     }
 
-    for (const lunge of this.lunges) {
-      if (lunge.time >= 0 && previousTime - lunge.time < boatLungeTiming.strike
-        && this.time - lunge.time >= boatLungeTiming.strike) {
-        this.emit('WATER_SPLASH', { x: boatLungePosition(lunge, this.time - lunge.time).x, heavySplash: true })
-      }
-      if (lunge.ended) continue
-      if (lunge.time < 0) {
-        if (this.z < lunge.courseZ - 44) continue
-        // Lead the current heading once at the warning. Turning changes the boat's path only.
-        const forwardX = Math.sin(this.heading)
-        const forwardZ = Math.cos(this.heading)
-        const lead = this.speed * boatLungeTiming.strike
-        const flank = lunge.side * 22
-        lunge.time = this.time
-        lunge.x = this.x + forwardX * lead
-        lunge.targetZ = this.z + forwardZ * lead
-        lunge.vx = -(forwardZ * flank + forwardX * 14) / boatLungeTiming.strike
-        lunge.vz = -(-forwardX * flank + forwardZ * 14) / boatLungeTiming.strike
-        const approach = planBoatLunge(lunge, this.hazards)
-        if (!approach) {
-          lunge.ended = true
-          lunge.time = -1
-          continue
-        }
-        lunge.curve = approach.curve
-        const spawn = boatLungePosition(lunge, 0)
-        lunge.side = (spawn.x - this.x) * forwardZ - (spawn.z - this.z) * forwardX < 0 ? -1 : 1
-        const text = lunge.side < 0 ? 'MEGALODON ON LEFT · STEER RIGHT' : 'MEGALODON ON RIGHT · STEER LEFT'
-        this.emit('LUNGE_WARNING', { x: lunge.side * 22, text })
-      }
-      const age = this.time - lunge.time
-      if (age < boatLungeTiming.bite) continue
-      const snout = boatLungePosition(lunge, age)
-      const contact = age <= boatLungeTiming.clear && Math.hypot(snout.x - this.x, snout.z - this.z) < 4.5
-      if (!contact && age < boatLungeTiming.clear) continue
-      lunge.ended = true
-      this.emit('LUNGE', { x: snout.x })
-      if (contact) this.damage(35, snout.x, 'shark')
-    }
+    this.updateLunges(previousTime, true)
     if (!this.sighted && this.z >= 740) {
       this.sighted = true
       this.emit('ISLAND_SIGHTED', { text: 'ISLAND AHEAD · MOOR LEFT OF THE PIER' })
@@ -600,6 +606,58 @@ export class Boat {
       if (!this.smooth) this.hull = Math.max(0, this.hull - 20)
       this.done = 'landed'
       this.emit('LANDED', { text: this.smooth ? 'SAFE MOORING' : 'MOORED · HARD LANDING' })
+    }
+  }
+
+  private startLunge(lunge: BoatLunge) {
+    // Lead the current heading once at the warning. Turning changes the boat's path only.
+    const { strike } = boatLungeTiming
+    const { flank, length } = sharkLunge[lunge.shark]
+    const forwardX = Math.sin(this.heading), forwardZ = Math.cos(this.heading)
+    const lead = this.speed * strike
+    lunge.x = this.x + forwardX * lead
+    lunge.targetZ = this.z + forwardZ * lead
+    lunge.vx = -(forwardZ * lunge.side * flank + forwardX * 14) / strike
+    lunge.vz = -(-forwardX * lunge.side * flank + forwardZ * 14) / strike
+    const approach = planBoatLunge(lunge, this.hazards, length)
+    if (!approach) {
+      lunge.ended = true
+      return
+    }
+    lunge.time = this.time
+    lunge.curve = approach.curve
+    const spawn = boatLungePosition(lunge, 0)
+    lunge.side = (spawn.x - this.x) * forwardZ - (spawn.z - this.z) * forwardX < 0 ? -1 : 1
+    const name = lunge.shark === 'megalodon' ? 'MEGALODON' : 'SHARK'
+    const direction = lunge.side < 0 ? 'LEFT · STEER RIGHT' : 'RIGHT · STEER LEFT'
+    this.emit('LUNGE_WARNING', { x: spawn.x, text: name + ' ON ' + direction })
+  }
+
+  private lungeSplash(lunge: BoatLunge, age: number, stage: 'breach' | 'reentry') {
+    const { x, z } = boatSharkPose(lunge, lunge.time + age)
+    this.emit('WATER_SPLASH', { x, heavySplash: true, boatSplash: { z, shark: lunge.shark, stage } })
+  }
+
+  private updateLunges(previousTime: number, canSteer: boolean) {
+    const { breach, bite, clear, splashdown, end } = boatLungeTiming
+    for (const lunge of this.lunges) {
+      if (lunge.time < 0) {
+        if (canSteer && !lunge.ended && this.z >= lunge.courseZ - 44) this.startLunge(lunge)
+        continue
+      }
+      const previousAge = previousTime - lunge.time
+      if (previousAge >= end) continue
+      const age = this.time - lunge.time
+      if (previousAge < breach && age >= breach) this.lungeSplash(lunge, breach, 'breach')
+      if (previousAge < splashdown && age >= splashdown) this.lungeSplash(lunge, splashdown, 'reentry')
+      if (lunge.ended || age < bite) continue
+      const snout = boatLungePosition(lunge, age)
+      const profile = sharkLunge[lunge.shark]
+      const contact = canSteer && age <= clear && Math.hypot(snout.x - this.x, snout.z - this.z) < profile.hitRadius
+      if (!contact && age < clear) continue
+      lunge.ended = true
+      this.emit('LUNGE', { x: snout.x })
+      if (contact) this.damage(profile.damage, snout.x, 'shark')
     }
   }
 

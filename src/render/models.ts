@@ -3,11 +3,11 @@ import { Octree } from 'three/addons/math/Octree.js'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import { clone as cloneSkeleton } from 'three/addons/utils/SkeletonUtils.js'
 import { clamp, damp, lerp, seededRandom } from '../core/math'
-import { boatSharkLength, harbor, reefScales, rockProfiles, type FloatingHazard, type ReefHazard, type RockVariant } from '../sim/boat'
+import { boatSharkLength, harbor, reefScales, regularSharkLength, rockProfiles, type FloatingHazard, type ReefHazard, type RockVariant } from '../sim/boat'
 
 // Visual lengths in scene units. Survivors, the wooden board, and the rescue deck are fixed references.
 export const MODEL_SCALES = {
-  regularShark: { label: 'Regular shark', targetLength: 6.2 },
+  regularShark: { label: 'Regular shark', targetLength: regularSharkLength },
   megalodon: { label: 'Megalodon', targetLength: boatSharkLength },
   rescueVessel: { label: 'Rescue vessel', scale: 1, deckAnchor: [-1.95, 1.548, 0] },
   helicopter: { label: 'Helicopter', targetLength: 14.2 },

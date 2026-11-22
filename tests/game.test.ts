@@ -3,9 +3,11 @@ import { neutralIntent } from '../src/input/intent'
 import { pilotBot, replay, defaultAssists } from '../src/game/replay'
 import { scoreRun } from '../src/game/score'
 import { Session } from '../src/game/session'
-import { Boat, boatLungePosition, boatLungeTiming, boatSharkLength, harbor, harborContact,
+import { Boat, boatLungePosition, boatLungeTiming, boatSharkLength, boatSharkPose, harbor, harborContact,
   planBoatLunge, reefContact, rockProfiles, type ReefHazard } from '../src/sim/boat'
 import { Rescue } from '../src/sim/rescue'
+import { waveHeight } from '../src/sim/water'
+import type { GameEvent } from '../src/game/events'
 import { tuning } from '../src/app/tuning'
 import { toCsv } from '../src/persistence/scores'
 
@@ -17,6 +19,9 @@ describe('complete run', () => {
     expect(first.survivors.saved).toBeGreaterThanOrEqual(5)
     expect(first.score).toBe(repeat.score)
     expect(first.time).toEqual(repeat.time)
+    expect(first.events.filter(event => event.type === 'LUNGE_WARNING')).toHaveLength(4)
+    expect(first.events.filter(event => event.boatSplash?.shark === 'megalodon').map(event => event.boatSplash?.stage))
+      .toEqual(['breach', 'reentry', 'breach', 'reentry'])
     expect(toCsv([first])).toContain('"REPLAY"')
   })
   it('logs a terminal idle loss', () => {
@@ -61,6 +66,34 @@ describe('complete run', () => {
   it('computes time and integrity points only in eligible outcomes', () => {
     expect(scoreRun(8000, 125, 95, 75, true, 'completed')).toBe(10790)
     expect(scoreRun(-3200, 150, 0, 100, false, 'failed_all_lost')).toBe(0)
+  })
+})
+
+describe('boat flank attacks', () => {
+  it.each([-1, 1] as const)('can dodge the regular shark from side %s after the warning', side => {
+    function sail(dodge: boolean) {
+      const events: Omit<GameEvent, 't'>[] = []
+      const boat = new Boat(tuning.seed, (type, data) => events.push({ type, ...data }))
+      const attack = boat.lunges.find(lunge => lunge.shark === 'regularShark' && lunge.side === side)!
+      for (const other of boat.lunges) if (other !== attack) other.ended = true
+      boat.z = attack.courseZ - 44 - 0.1
+      boat.speed = tuning.boat.speed * 0.69
+      boat.tick(tuning.tick, { ...neutralIntent, throttle: 0.69 }, false)
+      const spawn = boatLungePosition(attack, 0)
+      expect(spawn.x * side).toBeGreaterThan(12)
+      expect(spawn.z - boat.z).toBeGreaterThan(25)
+      for (let i = 0; i < 60 * 5; i++) {
+        boat.tick(tuning.tick, { ...neutralIntent, throttle: 0.69, steer: dodge && i > 50 ? -side * 0.52 : 0 }, false)
+      }
+      const peak = boatSharkPose(attack, attack.time + boatLungeTiming.apex)
+      expect(peak.y - waveHeight(peak.x, peak.z, attack.time + boatLungeTiming.apex)).toBeGreaterThan(1.5)
+      const splashes = events.filter(event => event.type === 'WATER_SPLASH')
+      expect(splashes.map(event => event.boatSplash?.stage)).toEqual(['breach', 'reentry'])
+      expect(splashes.every(event => event.heavySplash && (event.boatSplash?.z ?? 0) < -80)).toBe(true)
+      return events.filter(event => event.type === 'BOAT_COLLISION' && event.impact === 'shark').length
+    }
+    expect(sail(false)).toBe(1)
+    expect(sail(true)).toBe(0)
   })
 })
 

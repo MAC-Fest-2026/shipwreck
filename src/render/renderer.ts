@@ -5,10 +5,10 @@ import { BloomEffect, EffectComposer, EffectPass, RenderPass, VignetteEffect } f
 import { tuning } from '../app/tuning'
 import { clamp, damp, lerp, seededRandom } from '../core/math'
 import { timelines, type Session } from '../game/session'
-import { boatBuoyancyCenter, boatLungePosition, boatLungeTiming, harbor, type FloatingHazard } from '../sim/boat'
+import { boatBuoyancyCenter, boatLungeTiming, boatSharkPose, harbor, type BoatLunge, type FloatingHazard } from '../sim/boat'
 import { boardBreachHeight, roster } from '../sim/rescue'
 import { waterGlsl, waveHeight, waveUniforms } from '../sim/water'
-import { beam, boatSharkWaterline, environment, lanternGlow, placeBeam, wreckAtmosphere, wreckDebris } from './environment'
+import { beam, boatSplash, boatSplashDuration, environment, lanternGlow, placeBeam, wreckAtmosphere, wreckDebris } from './environment'
 import { claw, cockpit, dock, fitModelScale, hazard, HelicopterModel, instanceRocks, islandPlantings, islandSurface,
   light, lighthouseFoundation, lighthouseSite, MODEL_SCALES, mooringLights, person, prepareCruiseWreck, prepareIsland, prepareLighthouse,
   prepareRockSet, raft, rescueVessel, SharkModel, wreck, type ScaledModel } from './models'
@@ -286,6 +286,7 @@ export class GameRenderer {
   private readonly peopleMarkers = roster.map(() => ring(0.87, '#ffc078'))
   private readonly sharks = Array.from({ length: 3 }, (_, i) => new SharkModel('regularShark', i / 3))
   private readonly meg = new SharkModel('megalodon')
+  private readonly boatSplashes = [boatSplash(), boatSplash()]
   private readonly animatedAttacks = new WeakSet<object>()
   private nextSharkBite = 0
   private readonly rescueBeam = beam(this.scene)
@@ -360,18 +361,19 @@ export class GameRenderer {
     })
     container.replaceChildren(this.renderer.domElement)
     this.scene.fog = this.narrowFog
-    this.scene.add(this.camera, this.upperLight, this.rim, this.flashLight, this.rescueGroup, this.boatGroup, this.meg.root)
+    this.scene.add(this.camera, this.upperLight, this.rim, this.flashLight, this.rescueGroup, this.boatGroup,
+      this.meg.root, ...this.sharks.map(shark => shark.root))
     this.rim.position.set(-42, 35, 23)
     this.flashLight.position.set(41, 58, -12)
     this.camera.add(this.cabin.root)
     this.rescueGroup.add(this.helo.root, this.picker.root, this.raft.root, this.ship, this.rescueBoat, this.rope,
       this.wreckEffects.root, this.wreckWater.mesh, this.floatingDebris.root, this.marker, this.schoolBuoy,
-      ...this.people.map(p => p.root), ...this.peopleMarkers, ...this.sharks.map(s => s.root))
+      ...this.people.map(p => p.root), ...this.peopleMarkers)
     this.raft.root.position.x = -32
     this.rescueBoat.position.x = R.deploy
     this.rope.geometry.setAttribute('position', new T.BufferAttribute(new Float32Array(21), 3))
     this.rope.frustumCulled = false
-    this.boatGroup.add(this.island, this.reefs, this.obstacles)
+    this.boatGroup.add(this.island, this.reefs, this.obstacles, ...this.boatSplashes.map(splash => splash.root))
     this.harborDock = dock(this.boatGroup)
     this.markerBuoys = mooringLights(this.boatGroup)
     this.scene.add(this.rain)
@@ -560,16 +562,24 @@ export class GameRenderer {
     this.narrowFog.density = fog
     this.env.uniforms.fog.value = fog * 0.73
     this.env.uniforms.search.value = this.rescueBeam.mesh.visible ? 0.7 : 0
+    this.env.uniforms.sharkWakeSize.value.z = 0
+    this.sharks.forEach(shark => { shark.root.visible = false })
+    this.boatSplashes.forEach(splash => { splash.root.visible = false })
     this.meg.root.visible = false
     this.meg.swimSpeed = 1
     const animationDt = run.paused || run.autoStop || run.record ? 0 : dt
     if (newPhase && (run.phase === 'arrival' || arrival)) this.helo.resetHeading()
+    if (newPhase && firstPerson) {
+      this.sharks.forEach(shark => shark.resetAnimation())
+      this.meg.resetAnimation()
+    }
     let desiredFov = 44
     if (isRescue) {
       desiredFov = this.drawRescue(run, t, departure, settings.reduceMotion, animationDt)
     } else {
       desiredFov = this.drawBoat(run, t, arrival, settings.reduceMotion, animationDt)
     }
+    if (firstPerson) this.drawBoatSplashes(run, t, settings.reduceMotion)
     const raft = this.raft.root
     const boardWash = isRescue && raft.visible ? 1 - 0.8 * clamp((t - run.rescue.breachedAt) / 5) : 0
     this.env.uniforms.boardFoam.value.set(raft.position.x, raft.position.z, boardWash)
@@ -579,7 +589,7 @@ export class GameRenderer {
     this.env.uniforms.hullFoamPose.value.set(position.x + forwardX * center, position.z + forwardZ * center, forwardX, forwardZ)
     this.env.uniforms.hullFoamSize.value.set(halfLength, halfBeam, visible ? 0.82 + 0.18 * clamp(run.boat.speed / 16) : 0)
     this.helo.animateRotors(animationDt)
-    if (isRescue) this.sharks.forEach(shark => shark.animate(animationDt))
+    this.sharks.forEach(shark => shark.animate(animationDt))
     this.meg.animate(animationDt)
     const opening = run.phase === 'intro'
     const weight = firstPerson || !this.initialized || newPhase && (opening || arrival || run.phase === 'rescue')
@@ -790,7 +800,8 @@ export class GameRenderer {
       const chargeStart = 15 * (i % 2 === 0 ? 1 : -1)
       const z = attack ? lerp(chargeStart, 0.8, clamp((t - attack.start) / (attack.end - attack.start))) : Math.sin(angle) * dx * 0.42
       root.position.set(targetX, waveHeight(targetX, z, t) - (attack ? 0.25 : 0.58), z)
-      root.rotation.y = attack ? (chargeStart > 0 ? Math.PI : 0) : Math.atan2(-Math.sin(angle), 0.42 * Math.cos(angle))
+      const yaw = attack ? (chargeStart > 0 ? Math.PI : 0) : Math.atan2(-Math.sin(angle), 0.42 * Math.cos(angle))
+      root.rotation.set(0, yaw, 0, 'YXZ')
       if (attack?.announced && attack.target.state === 'floating' && !this.animatedAttacks.has(attack)
         && shark.bite(this.nextSharkBite, 2.7)) {
         this.animatedAttacks.add(attack)
@@ -880,24 +891,44 @@ export class GameRenderer {
       model.visible = h.z < b.z + 230 && h.z > b.z - 15
       if (model.visible) model.position.y = waveHeight(h.x, -h.z, t)
     }
-    const active = b.lunges.find(l => l.time >= 0 && t - l.time < boatLungeTiming.end)
-    if (active) {
-      const age = t - active.time
-      const snout = boatLungePosition(active, age)
-      const speed = Math.hypot(snout.vx, snout.vz)
-      // The model's origin is behind the snout. Align its head with the collision path.
-      const snoutOffset = MODEL_SCALES.megalodon.targetLength * 0.44
-      const x = snout.x - snout.vx / speed * snoutOffset
-      const z = -snout.z + snout.vz / speed * snoutOffset
-      const { height, verticalSpeed } = boatSharkWaterline(x, z, t, age, snout.vx, -snout.vz)
-      this.meg.root.visible = true
-      this.meg.root.position.set(x, height, z)
-      this.meg.root.rotation.set(-Math.atan2(verticalSpeed, speed), Math.atan2(snout.vx, -snout.vz), 0, 'YXZ')
-      this.meg.swimSpeed = lerp(1.5, 2, smoothstep(age, 1, boatLungeTiming.bite))
-      if (age >= boatLungeTiming.bite && age <= boatLungeTiming.clear
-        && !this.animatedAttacks.has(active) && this.meg.bite(0, 1.75)) this.animatedAttacks.add(active)
+    for (const lunge of b.lunges) {
+      if (lunge.time >= 0 && t - lunge.time < boatLungeTiming.end) this.drawBoatShark(lunge, t)
     }
     return 61
+  }
+
+  private drawBoatShark(lunge: BoatLunge, time: number) {
+    const { rise, breach, bite, clear } = boatLungeTiming
+    const age = time - lunge.time
+    const meg = lunge.shark === 'megalodon'
+    const variant = lunge.side < 0 ? 0 : 1
+    const shark = meg ? this.meg : this.sharks[variant]
+    const pose = boatSharkPose(lunge, time)
+    shark.root.visible = true
+    shark.root.position.set(pose.x, pose.y, pose.z)
+    shark.root.rotation.set(pose.pitch, pose.yaw, 0, 'YXZ')
+    shark.swimSpeed = (meg ? 1.55 : 2.1) + 0.65 * smoothstep(age, 0.4, bite)
+    if (age >= bite && age <= clear && !this.animatedAttacks.has(lunge)
+      && shark.bite(meg ? 0 : variant, meg ? 1.75 : 2.7)) this.animatedAttacks.add(lunge)
+    if (age < breach) {
+      this.env.uniforms.sharkWakePose.value.set(pose.x, pose.z, pose.forwardX, pose.forwardZ)
+      this.env.uniforms.sharkWakeSize.value.set(meg ? 24 : 11, meg ? 1.2 : 0.66,
+        smoothstep(age, 0, 0.18) * (1 - smoothstep(age, rise, breach)))
+    }
+  }
+
+  private drawBoatSplashes(run: Session, time: number, reduced: boolean) {
+    const now = run.activeTime
+    let slot = 0
+    for (let i = run.events.length - 1; i >= 0 && slot < this.boatSplashes.length; i--) {
+      const event = run.events[i]
+      const age = Math.max(0, now - event.t / 1000)
+      if (age >= boatSplashDuration) break
+      if (event.type !== 'WATER_SPLASH' || !event.boatSplash || event.x === undefined) continue
+      const { shark, stage, z } = event.boatSplash
+      const strength = (shark === 'megalodon' ? 1.85 : 1) * (stage === 'reentry' ? 1.12 : 1)
+      this.boatSplashes[slot++].update(event.x, z, time, age, strength, reduced || this.quality === 'low')
+    }
   }
 
   private drawRain(t: number, reduced: boolean) {

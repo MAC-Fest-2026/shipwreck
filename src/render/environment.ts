@@ -1,21 +1,7 @@
 import * as T from 'three'
 import { seededRandom } from '../core/math'
-import { boatLungeTiming, harbor } from '../sim/boat'
+import { harbor } from '../sim/boat'
 import { waterGlsl, waveAmplitude, waveHeight, waveUniforms } from '../sim/water'
-
-function lungeElevation(age: number) {
-  const { bite, strike, clear, end } = boatLungeTiming
-  const { smoothstep } = T.MathUtils
-  return -1.05 + 1.4 * (smoothstep(age, bite, strike) - smoothstep(age, strike, clear))
-    - 7.2 * smoothstep(age, clear, end)
-}
-
-export function boatSharkWaterline(x: number, z: number, time: number, age: number, vx: number, vz: number) {
-  const delta = 0.01
-  const up = waveHeight(x + vx * delta, z + vz * delta, time + delta) + lungeElevation(age + delta)
-  const down = waveHeight(x - vx * delta, z - vz * delta, time - delta) + lungeElevation(age - delta)
-  return { height: waveHeight(x, z, time) + lungeElevation(age), verticalSpeed: (up - down) / (2 * delta) }
-}
 
 const noise = `
 float rand2(vec2 p) { return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453); }
@@ -48,6 +34,8 @@ export type SceneUniforms = {
   boardFoam: { value: T.Vector3 }
   hullFoamPose: { value: T.Vector4 }
   hullFoamSize: { value: T.Vector3 }
+  sharkWakePose: { value: T.Vector4 }
+  sharkWakeSize: { value: T.Vector3 }
 }
 
 export interface SceneEnvironment {
@@ -76,6 +64,7 @@ export function environmentSettings(): SceneUniforms {
     mooring: { value: new T.Vector4((minX + maxX) / 2, -(minZ + maxZ) / 2, (maxX - minX) / 2, (maxZ - minZ) / 2) },
     boardFoam: { value: new T.Vector3() },
     hullFoamPose: { value: new T.Vector4(0, 0, 1, 0) }, hullFoamSize: { value: new T.Vector3(1, 1, 0) },
+    sharkWakePose: { value: new T.Vector4(0, 0, 0, 1) }, sharkWakeSize: { value: new T.Vector3() },
   }
 }
 
@@ -111,8 +100,8 @@ export function environment(scene: T.Scene): SceneEnvironment {
     `,
     fragmentShader: `
       uniform float time, dawn, flash, fog, search, crestScale;
-      uniform vec3 contact, sunDirection, boardFoam, hullFoamSize;
-      uniform vec4 shoal, mooring, hullFoamPose;
+      uniform vec3 contact, sunDirection, boardFoam, hullFoamSize, sharkWakeSize;
+      uniform vec4 shoal, mooring, hullFoamPose, sharkWakePose;
       uniform sampler2D waterDetail;
       varying vec3 world;
       varying vec2 waveSlope;
@@ -177,6 +166,21 @@ export function environment(scene: T.Scene): SceneEnvironment {
           float taper = 1. - .90 * smoothstep(.12, 1., along.x / hullFoamSize.x);
           float edge = boxEdge(along, vec2(hullFoamSize.x, hullFoamSize.y * taper)) - .23;
           foam = max(foam, wash(edge, 1.65, grain) * hullFoamSize.z);
+        }
+        if (sharkWakeSize.z > 0.) {
+          vec2 fromFin = p - sharkWakePose.xy;
+          vec2 sharkForward = sharkWakePose.zw;
+          float aft = -dot(fromFin, sharkForward);
+          if (aft > -.5 && aft < sharkWakeSize.x) {
+            float side = abs(dot(fromFin, vec2(sharkForward.y, -sharkForward.x)));
+            float spread = .26 + aft * .19;
+            float ridge = 1. - smoothstep(.12, sharkWakeSize.y, abs(side - spread) + (grain - .5) * .42);
+            float trail = (1. - smoothstep(sharkWakeSize.x * .28, sharkWakeSize.x, aft))
+              * smoothstep(-.5, .62, aft);
+            float churn = (1. - smoothstep(.14, .6, side)) * (1. - smoothstep(.7, sharkWakeSize.x * .53, aft));
+            float broken = mix(.58, 1., smoothstep(.27, .63, grain));
+            foam = max(foam, max(ridge, churn) * trail * broken * sharkWakeSize.z);
+          }
         }
         if (search > 0.) {
           vec2 underHelicopter = p - contact.xz;
@@ -296,6 +300,105 @@ function particleNoiseTexture() {
   texture.minFilter = texture.magFilter = T.LinearFilter
   texture.needsUpdate = true
   return texture
+}
+
+export const boatSplashDuration = 1.8
+
+export function boatSplash() {
+  const root = new T.Group()
+  root.visible = false
+  const uniforms = { time: { value: 0 }, age: { value: 0 }, progress: { value: 0 }, strength: { value: 1 },
+    particleNoise: { value: particleNoiseTexture() }, ...waveUniforms }
+  const billboard = new T.PlaneGeometry(1, 1)
+  const droplets = new T.InstancedBufferGeometry()
+  droplets.setIndex(billboard.index)
+  droplets.setAttribute('position', billboard.attributes.position)
+  droplets.setAttribute('uv', billboard.attributes.uv)
+  const random = seededRandom(6541)
+  const count = 72
+  const seeds = Float32Array.from(Array.from({ length: count }, () =>
+    [random() * Math.PI * 2, 4.8 + random() * 4.1, 2.6 + random() * 4.4, random()]).flat())
+  droplets.setAttribute('particle', new T.InstancedBufferAttribute(seeds, 4))
+  const spray = new T.Mesh(droplets, new T.ShaderMaterial({
+    uniforms, transparent: true, depthWrite: false,
+    vertexShader: `
+      uniform float age, strength;
+      attribute vec4 particle;
+      varying vec2 tex;
+      varying float opacity, seed, mist;
+      void main() {
+        seed = particle.w;
+        mist = step(.72, seed);
+        float t = max(0., age - seed * .19);
+        float y = t * (particle.y - 6.7 * t);
+        vec2 direction = vec2(cos(particle.x), sin(particle.x));
+        vec3 center = modelMatrix[3].xyz;
+        center.xz += direction * (.18 + t * particle.z) * strength;
+        center.y += (.13 + y) * strength;
+        float size = strength * mix(.22 + seed * .62, 1.05 + .7 * t, mist);
+        vec4 viewPosition = viewMatrix * vec4(center, 1.);
+        viewPosition.xy += position.xy * size * vec2(1., mix(2.4, 1.18, mist));
+        gl_Position = projectionMatrix * viewPosition;
+        tex = uv * 2. - 1.;
+        opacity = smoothstep(0., .055, t) * smoothstep(-.06, .32, y)
+          * (1. - smoothstep(.54, 1.32, t)) * mix(.93, .39, mist);
+      }`,
+    fragmentShader: `
+      uniform sampler2D particleNoise;
+      varying vec2 tex;
+      varying float opacity, seed, mist;
+      void main() {
+        float grain = texture2D(particleNoise, tex * .44 + seed * 7.3).r;
+        float edge = 1. - smoothstep(.28, 1., length(tex) + (grain - .5) * .47);
+        vec3 color = mix(vec3(.65, .83, .87), vec3(.96, .99, 1.), grain);
+        gl_FragColor = vec4(color, opacity * edge * mix(.48, 1., grain) * mix(1., edge, mist));
+        #include <colorspace_fragment>
+      }`,
+  }))
+  const foamGeometry = new T.PlaneGeometry(2, 2, 14, 14).rotateX(-Math.PI / 2)
+  const foam = new T.Mesh(foamGeometry, new T.ShaderMaterial({
+    uniforms, transparent: true, depthWrite: false,
+    vertexShader: `
+      uniform float age, strength, time;
+      varying vec2 tex, seaPoint;
+      ${waterGlsl}
+      void main() {
+        tex = uv * 2. - 1.;
+        float reach = (1.35 + age * 3.4) * strength;
+        vec4 world = modelMatrix * vec4(position * reach, 1.);
+        seaPoint = world.xz;
+        world.y = oceanSample(seaPoint, time).x + .14;
+        gl_Position = projectionMatrix * viewMatrix * world;
+      }`,
+    fragmentShader: `
+      uniform sampler2D particleNoise;
+      uniform float progress;
+      varying vec2 tex, seaPoint;
+      void main() {
+        float grain = texture2D(particleNoise, seaPoint * .37).r;
+        float r = length(tex) + (grain - .5) * .25;
+        float rim = (1. - smoothstep(.03, .19, abs(r - .73))) * .82;
+        float churn = (1. - smoothstep(.15, .85, r)) * (1. - progress);
+        float fade = smoothstep(0., .07, progress) * (1. - smoothstep(.32, 1., progress));
+        float opacity = max(rim, churn) * fade * smoothstep(.23, .76, grain);
+        gl_FragColor = vec4(.76, .88, .91, opacity);
+        #include <colorspace_fragment>
+      }`,
+  }))
+  foam.frustumCulled = spray.frustumCulled = false
+  root.add(foam, spray)
+  return {
+    root,
+    update(x: number, z: number, time: number, age: number, strength: number, lowDetail: boolean) {
+      root.visible = true
+      root.position.set(x, waveHeight(x, z, time - age), z)
+      uniforms.time.value = time
+      uniforms.age.value = age
+      uniforms.progress.value = age / boatSplashDuration
+      uniforms.strength.value = strength
+      droplets.instanceCount = lowDetail ? 40 : count
+    },
+  }
 }
 
 export function wreckAtmosphere() {
