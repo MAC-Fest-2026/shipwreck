@@ -13,7 +13,7 @@ export function pilotBot(run: Session): ControlIntent {
     const span = tuning.rescue.span
     if (r.carried.length) {
       const over = r.overDeck && Math.abs(r.x - 52) < 2.2 && Math.abs(r.velocity) < 3
-      return { ...neutralIntent, heliTargetX: 52 / span, winchTarget: over ? 1 : 0.79,
+      return { ...neutralIntent, heliTargetX: 52 / span, winchTarget: r.winchTargetAt(over ? r.deckY + 1.1 : 5.6),
         gripClosed: !(over && r.clawY - r.deckY < 1.85) }
     }
     const waiting = r.survivors.filter(s => s.state === 'floating' || s.state === 'debris')
@@ -26,7 +26,7 @@ export function pilotBot(run: Session): ControlIntent {
     // Hold a settled position throughout the closing animation.
     const near = Math.abs(r.clawX - target) < (partner ? 0.34 : 0.74)
       && r.grabbable().includes(xTarget) && Math.abs(r.velocity) < 1.25
-    return { ...neutralIntent, heliTargetX: target / span, winchTarget: 1, gripClosed: near }
+    return { ...neutralIntent, heliTargetX: target / span, winchTarget: r.winchTargetAt(r.survivorY(xTarget)), gripClosed: near }
   }
   if (run.phase === 'boat') {
     const warning = b.lunges.find(l => l.time >= 0 && !l.ended)

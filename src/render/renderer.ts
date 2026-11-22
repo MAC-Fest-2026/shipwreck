@@ -6,7 +6,7 @@ import { tuning } from '../app/tuning'
 import { clamp, damp, lerp, seededRandom } from '../core/math'
 import { timelines, type Session } from '../game/session'
 import { boatBuoyancyCenter, boatLungeTiming, boatSharkPose, harbor, type BoatLunge, type FloatingHazard } from '../sim/boat'
-import { boardBreachHeight, roster } from '../sim/rescue'
+import { boardBreachHeight, rescueBoardX, rescuePlaneZ, roster } from '../sim/rescue'
 import { waterGlsl, waveHeight, waveUniforms } from '../sim/water'
 import { beam, boatSplash, boatSplashDuration, environment, lanternGlow, placeBeam, wreckAtmosphere, wreckDebris } from './environment'
 import { claw, cockpit, dock, fitModelScale, hazard, HelicopterModel, instanceRocks, islandPlantings, islandSurface,
@@ -308,6 +308,7 @@ export class GameRenderer {
   private readonly floatingHazards = new Map<FloatingHazard, T.Group>()
   private readonly rope = new T.Line(new T.BufferGeometry(), new T.LineBasicMaterial({ color: '#b5a998' }))
   private readonly winchStart = new T.Vector3()
+  private readonly winchEnd = new T.Vector3()
   private readonly beamSource = new T.Vector3()
   private readonly beamTarget = new T.Vector3()
   private readonly narrowFog = new T.FogExp2('#40606a', 0.008)
@@ -332,12 +333,9 @@ export class GameRenderer {
   get stats() { return { fps: this.fps, calls: this.renderer.info.render.calls, triangles: this.renderer.info.render.triangles, scale: this.scale } }
 
   constructor(container: HTMLElement, onContext: (lost: boolean) => void) {
-    const fallbackShip = wreck()
-    this.ship.add(fallbackShip)
     this.modelSizes = {
       rescueVessel: fitModelScale('rescueVessel', this.rescueBoat),
       helicopter: this.helo.fallbackSize,
-      cruiseShip: fitModelScale('cruiseShip', fallbackShip),
     }
     this.rescueBoat.add(this.deckPassengers)
     this.env.uniforms.shoal.value.set(harbor.island.x, -harbor.island.z, 1 / 62, 1 / 64)
@@ -369,9 +367,9 @@ export class GameRenderer {
     this.rescueGroup.add(this.helo.root, this.picker.root, this.raft.root, this.ship, this.rescueBoat, this.rope,
       this.wreckEffects.root, this.wreckWater.mesh, this.floatingDebris.root, this.marker, this.schoolBuoy,
       ...this.people.map(p => p.root), ...this.peopleMarkers)
-    this.raft.root.position.x = -32
+    this.raft.root.position.set(rescueBoardX, 0, rescuePlaneZ)
     this.rescueBoat.position.x = R.deploy
-    this.rope.geometry.setAttribute('position', new T.BufferAttribute(new Float32Array(21), 3))
+    this.rope.geometry.setAttribute('position', new T.BufferAttribute(new Float32Array(17 * 3), 3).setUsage(T.DynamicDrawUsage))
     this.rope.frustumCulled = false
     this.boatGroup.add(this.island, this.reefs, this.obstacles, ...this.boatSplashes.map(splash => splash.root))
     this.harborDock = dock(this.boatGroup)
@@ -425,9 +423,14 @@ export class GameRenderer {
       loader.loadAsync(path + 'cruise_ship_wreck.glb').then(({ scene }) => {
         this.modelSizes.cruiseShip = prepareCruiseWreck(scene)
         const interior = damageCruiseShip(scene, this.shipFromWorld)
-        this.ship.clear().add(scene, interior)
+        this.ship.add(scene, interior)
         this.wreckLoaded = true
-      }).catch((error: unknown) => console.warn('[models] Could not load cruise_ship_wreck.glb.', error)),
+      }).catch((error: unknown) => {
+        console.warn('[models] Could not load cruise_ship_wreck.glb.', error)
+        const fallbackShip = wreck()
+        this.modelSizes.cruiseShip = fitModelScale('cruiseShip', fallbackShip)
+        this.ship.add(fallbackShip)
+      }),
       loader.loadAsync(path + 'ocean-rocks.glb').then(({ scene }) => {
         const asset = prepareRockSet(scene)
         this.rockSet = asset
@@ -713,26 +716,27 @@ export class GameRenderer {
       if (breach >= 0 && !this.animatedAttacks.has(r) && this.meg.bite(0, 1.85)) this.animatedAttacks.add(r)
       if (!reduced && breach >= 0 && breach < 0.9) this.eye.y += Math.sin(breach * 27) * 0.38
     }
-    this.ship.visible = !practice
+    this.ship.visible = !practice && this.ship.children.length > 0
     this.helo.root.visible = !inIntro
     const approachTime = 8 - run.elapsed
-    this.helo.root.position.set(inArrival ? r.x - approachTime ** 2 * 1.15 : r.x, r.altitude, 0)
+    this.helo.root.position.set(inArrival ? r.x - approachTime ** 2 * 1.15 : r.x, r.altitude, rescuePlaneZ)
     if (this.helo.root.visible) {
       this.helo.pose(inArrival ? approachTime * 2.3 : departure ? 0 : r.velocity,
         inArrival ? 0.065 * clamp(approachTime) : departure ? 0 : r.bank, dt, reduced)
     }
     this.picker.root.visible = !inIntro && !inArrival
-    this.picker.root.position.set(r.clawX, r.clawY, 0)
+    this.picker.root.position.set(r.clawX, r.clawY, rescuePlaneZ)
     this.picker.root.rotation.z = -r.swing
     this.picker.jaws.forEach(jaw => { jaw.rotation.z = lerp(0.39, -0.54, r.gripProgress) })
     this.rope.visible = this.picker.root.visible
     if (this.rope.visible) {
       const winch = this.helo.winch.getWorldPosition(this.winchStart)
+      const anchor = this.picker.cableAnchor.getWorldPosition(this.winchEnd)
       const rope = this.rope.geometry.attributes.position
       for (let i = 0; i < rope.count; i++) {
         const k = i / (rope.count - 1)
-        rope.setXYZ(i, lerp(winch.x, r.clawX, k) + 2 * r.swing * Math.sin(k * Math.PI),
-          lerp(winch.y, r.clawY + 0.27, k), lerp(winch.z, 0, k))
+        rope.setXYZ(i, lerp(winch.x, anchor.x, k) + 2 * r.swing * Math.sin(k * Math.PI),
+          lerp(winch.y, anchor.y, k), lerp(winch.z, anchor.z, k))
       }
       rope.needsUpdate = true
     }
@@ -747,19 +751,19 @@ export class GameRenderer {
       this.rescueBeam.intensity.value = 0.39
     }
     this.marker.visible = this.picker.root.visible && !departure
-    this.marker.position.set(r.clawX, waveHeight(r.clawX, 0, t) + 0.1, 0)
+    this.marker.position.set(r.clawX, waveHeight(r.clawX, rescuePlaneZ, t) + 0.1, rescuePlaneZ)
     this.marker.material.color.copy(r.grabbable().length ? amber : cyan)
     this.raft.root.visible = !practice
-    this.raft.root.position.y = waveHeight(-32, 0, t) + 0.35
+    this.raft.root.position.y = waveHeight(rescueBoardX, rescuePlaneZ, t) + 0.35
     this.raft.planks.forEach(({ plank, offset, rotation, drift }, index) => {
       const warp = clamp(breach / 5) * drift
       plank.position.set(warp * 1.4, 0.12 + Math.sin(t * 2 + index * 0.22) * (breach >= 0 ? 0.28 : 0.06), offset * (1 + Math.max(0, Math.abs(warp) * 0.29)))
       plank.rotation.set(0, rotation + warp * 0.32, Math.sin(t + index * 0.1) * 0.055)
     })
-    this.rescueBoat.position.set(R.deploy, waveHeight(R.deploy, 0, t), 0)
+    this.rescueBoat.position.set(R.deploy, waveHeight(R.deploy, rescuePlaneZ, t), rescuePlaneZ)
     this.rescueBoat.rotation.set(0, -0.13, Math.sin(t * 1.7) * 0.043, 'XYZ')
     this.schoolBuoy.visible = practice && !r.carried.length
-    this.schoolBuoy.position.set(r.survivors[0].x, waveHeight(r.survivors[0].x, 0, t) + 0.25, 0)
+    this.schoolBuoy.position.set(r.survivors[0].x, waveHeight(r.survivors[0].x, rescuePlaneZ, t) + 0.25, rescuePlaneZ)
     const carriers = r.carried
     this.people.forEach(({ root, arms }, index) => {
       const s = r.survivors[index]
@@ -775,7 +779,7 @@ export class GameRenderer {
       if (root.parent !== parent) parent.add(root)
       if (saved) root.position.copy(this.deckSlots[index])
       else root.position.set(i >= 0 ? r.clawX + (i - 0.5) * 0.59 : s.x,
-        i >= 0 ? r.clawY - 2.2 : r.survivorY(s, t) - 1.22, i >= 0 ? 0.1 : s.z)
+        i >= 0 ? r.clawY - 2.2 : r.survivorY(s, t) - 1.22, s.z)
       root.rotation.z = Math.sin(t * 3.7 + index) * (floating ? 0.23 : 0.074)
       root.rotation.y = Math.sin(index * 15.13) * 0.52
       arms[0].rotation.z = 0.55 + Math.sin(t * 2.75 + index) * 0.3
@@ -796,7 +800,7 @@ export class GameRenderer {
       const attack = r.attacks[i]
       shark.swimSpeed = attack ? 2.7 : 2
       const dx = i * 4 + 16
-      const targetX = attack ? attack.target.x : -32 + Math.cos(angle) * dx
+      const targetX = attack ? attack.target.x : rescueBoardX + Math.cos(angle) * dx
       const chargeStart = 15 * (i % 2 === 0 ? 1 : -1)
       const z = attack ? lerp(chargeStart, 0.8, clamp((t - attack.start) / (attack.end - attack.start))) : Math.sin(angle) * dx * 0.42
       root.position.set(targetX, waveHeight(targetX, z, t) - (attack ? 0.25 : 0.58), z)

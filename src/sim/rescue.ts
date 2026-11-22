@@ -7,6 +7,8 @@ import { waveHeight } from './water'
 const R = tuning.rescue
 const S = tuning.shark
 const boardCapacity = 3
+export const rescueBoardX = -32
+export const rescuePlaneZ = 0
 
 // An age of zero is the top of the visible board-break breach.
 export function boardBreachHeight(age: number) {
@@ -18,14 +20,14 @@ export function boardBreachHeight(age: number) {
 }
 
 export const roster = [
-  { id: 'mara', name: 'Mara Voss', x: -35.4, z: 0, skin: '#c59374' },
-  { id: 'elias', name: 'Elias Rook', x: -34, z: -0.6, skin: '#d3ae94' },
-  { id: 'dev', name: 'Dev Kapoor', x: -30.8, z: 0.4, skin: '#ac7b5b' },
-  { id: 'ana', name: 'Ana Kapoor', x: -33.1, z: -3.45, skin: '#be8d69' },
-  { id: 'priya', name: 'Priya Nair', x: -28.2, z: -3.15, skin: '#956848' },
-  { id: 'jay', name: 'Jay Okafor', x: -27.65, z: 3.25, skin: '#79563e' },
-  { id: 'tommy', name: 'Tommy Ricci', x: -31.2, z: 3.55, skin: '#dbad91' },
-  { id: 'hollis', name: 'Hollis Brandt', x: -29.25, z: 4.1, skin: '#bc9172' },
+  { id: 'mara', name: 'Mara Voss', x: -35.4, skin: '#c59374' },
+  { id: 'elias', name: 'Elias Rook', x: -34, skin: '#d3ae94' },
+  { id: 'dev', name: 'Dev Kapoor', x: -30.8, skin: '#ac7b5b' },
+  { id: 'ana', name: 'Ana Kapoor', x: -39.8, skin: '#be8d69' },
+  { id: 'priya', name: 'Priya Nair', x: -24.1, skin: '#956848' },
+  { id: 'jay', name: 'Jay Okafor', x: -41.2, skin: '#79563e' },
+  { id: 'tommy', name: 'Tommy Ricci', x: -22.7, skin: '#dbad91' },
+  { id: 'hollis', name: 'Hollis Brandt', x: -21.25, skin: '#bc9172' },
 ] as const
 export const maxSurvivors = roster.length
 export const normalizeSurvivorCount = (value: unknown) =>
@@ -33,7 +35,8 @@ export const normalizeSurvivorCount = (value: unknown) =>
 
 export type SurvivorState = 'debris' | 'floating' | 'carried' | 'falling' | 'saved' | 'lost'
 export interface Survivor {
-  id: string; name: string; x: number; z: number; skin: string
+  id: string; name: string; x: number; readonly z: typeof rescuePlaneZ; skin: string
+  waterAnchorX: number
   state: SurvivorState; targeted: boolean; lastTarget: number; fallY: number; fallSpeed: number
 }
 interface Attack { target: Survivor; start: number; strike: number; end: number; delayed: boolean; announced: boolean }
@@ -49,6 +52,7 @@ export class Rescue {
   cable = 8.28
   swing = 0
   private swingVelocity = 0
+  private readonly swimmerSlope = { x: 0, z: 0 }
   grip = false
   gripProgress = 0
   private gripTimer = 0
@@ -72,28 +76,33 @@ export class Rescue {
   constructor(seed: number, private readonly emit: Emit, readonly practice = false, count: number = maxSurvivors) {
     this.random = seededRandom(seed)
     this.survivors = practice
-      ? [{ id: 'buoy', name: 'Training buoy', skin: '#f2914f', x: 0, z: 0, state: 'floating', targeted: false,
+      ? [{ id: 'buoy', name: 'Training buoy', skin: '#f2914f', x: 0, z: rescuePlaneZ, waterAnchorX: 0, state: 'floating', targeted: false,
           lastTarget: -Infinity, fallY: 0, fallSpeed: 0 }]
       : roster.slice(0, normalizeSurvivorCount(count)).map((entry, i) => ({
-          ...entry, state: i < boardCapacity ? 'debris' : 'floating',
+          ...entry, z: rescuePlaneZ, waterAnchorX: entry.x, state: i < boardCapacity ? 'debris' : 'floating',
           targeted: false, lastTarget: -Infinity, fallY: 0, fallSpeed: 0 }))
   }
 
   get altitude() { return R.altitude + 0.18 * Math.sin(this.time * 1.6) }
   get clawX() { return this.x + this.cable * Math.sin(this.swing) }
   get clawY() { return this.altitude - this.cable * Math.cos(this.swing) }
-  get deckY() { return R.deckY + waveHeight(R.deploy, 0, this.time) }
+  get deckY() { return R.deckY + waveHeight(R.deploy, rescuePlaneZ, this.time) }
   get saved() { return this.survivors.filter(s => s.state === 'saved').length }
   get lost() { return this.survivors.filter(s => s.state === 'lost').length }
   get carried() { return this.survivors.filter(s => s.state === 'carried') }
   get overDeck() { return Math.abs(this.clawX - R.deploy) <= R.deckWidth / 2 }
   get jammed() { return this.time < this.jamUntil }
 
+  winchTargetAt(height: number) {
+    const length = (this.altitude - height) / Math.cos(this.swing)
+    return clamp((length - R.cableMin) / (R.cableMax - R.cableMin))
+  }
+
   survivorY(s: Survivor, waveTime = this.time) {
     if (s.state === 'falling') return s.fallY
     if (s.state === 'saved') return this.deckY + 1.1
     return s.state === 'debris'
-      ? waveHeight(-32, 0, waveTime) + 1.45
+      ? waveHeight(rescueBoardX, rescuePlaneZ, waveTime) + 1.45
       : waveHeight(s.x, s.z, waveTime) + 0.75
   }
 
@@ -126,6 +135,15 @@ export class Rescue {
       + clamp(-acceleration, -15, 15) * 0.012) * step
     this.swing = clamp(this.swing + this.swingVelocity * step, -0.13, 0.13)
 
+    if (!this.practice) {
+      for (const s of this.survivors) {
+        if (s.state !== 'floating') continue
+        waveHeight(s.waterAnchorX, s.z, this.time, this.swimmerSlope)
+        const sway = clamp(-0.58 * this.swimmerSlope.x, -0.28, 0.28)
+        s.x = clamp(s.waterAnchorX + sway, -R.span, R.span)
+      }
+    }
+
     if (intent.trackingState === 'ok' && !this.jammed) {
       const desired = assist.winchOnly
         ? (this.grip && !(this.overDeck && this.clawY - this.deckY <= R.safeHeight)) || this.grabbable().length > 0
@@ -151,7 +169,7 @@ export class Rescue {
       const previousAge = previousTime - this.breachedAt
       const breachAge = this.time - this.breachedAt
       if (previousAge >= 0 && previousAge < 2.25 && boardBreachHeight(previousAge) > 0 && boardBreachHeight(breachAge) <= 0) {
-        this.emit('WATER_SPLASH', { x: -32, heavySplash: true })
+        this.emit('WATER_SPLASH', { x: rescueBoardX, heavySplash: true })
       }
       if (this.time >= this.danglingAt) {
         const hanging = this.carried[0]
@@ -213,8 +231,7 @@ export class Rescue {
         s.targeted = false
       } else {
         s.state = 'falling'
-        s.x = this.clawX
-        s.z = 0
+        s.x = s.waterAnchorX = clamp(this.clawX, -R.span, R.span)
         s.fallY = this.clawY
         s.fallSpeed = 0
         this.emit('WATER_DROP', { id: s.id, x: s.x, text: 'WATER DROP · RECOVER SURVIVOR' })
@@ -243,12 +260,12 @@ export class Rescue {
     }
     if (active.length && this.warningTime === Infinity && (this.time >= S.breachAt || this.saved >= S.breachCount)) {
       this.warningTime = this.time
-      this.emit('MEGALODON_WARNING', { x: -32, text: 'LARGE CONTACT · BRACE' })
+      this.emit('MEGALODON_WARNING', { x: rescueBoardX, text: 'LARGE CONTACT · BRACE' })
     }
     if (!breached && this.time >= this.warningTime + S.warning) {
       this.breachedAt = this.time
       for (const s of this.survivors) if (s.state === 'debris') s.state = 'floating'
-      this.emit('MEGALODON_BREACH', { x: -32, text: 'MEGALODON BREACH' })
+      this.emit('MEGALODON_BREACH', { x: rescueBoardX, text: 'MEGALODON BREACH' })
     }
     for (let index = this.attacks.length - 1; index >= 0; index--) {
       const attack = this.attacks[index]
@@ -274,7 +291,7 @@ export class Rescue {
     const reachable = candidates.filter(s => Math.abs(this.x - s.x) < 31)
     const eligible = !idle && reachable.length ? reachable : candidates
     if (!eligible.length) return
-    const weights = eligible.map(s => (s.state === 'floating' ? 5 : Math.abs(s.x + 32) > 2 ? 2 : 0.65)
+    const weights = eligible.map(s => (s.state === 'floating' ? 5 : Math.abs(s.x - rescueBoardX) > 2 ? 2 : 0.65)
       * (0.7 + 0.3 / (1 + Math.abs(s.x + 30) / 20)))
     let choice = this.random() * weights.reduce((total, weight) => total + weight, 0)
     const choiceIndex = weights.findIndex(weight => (choice -= weight) <= 0)
@@ -292,8 +309,8 @@ export class Rescue {
 
   private resolveAttack(s: Survivor) {
     s.targeted = false
-    const lowCarry = s.state === 'carried' && this.clawY - waveHeight(this.clawX, 0, this.time) < 1.5
-    const edge = s.state === 'debris' && Math.abs(s.x + 32) > 2
+    const lowCarry = s.state === 'carried' && this.clawY - waveHeight(this.clawX, rescuePlaneZ, this.time) < 1.5
+    const edge = s.state === 'debris' && Math.abs(s.x - rescueBoardX) > 2
     if (edge && this.random() < 0.5) {
       s.state = 'floating'
     } else if (s.state === 'floating' || lowCarry || edge) {

@@ -5,8 +5,8 @@ import { scoreRun } from '../src/game/score'
 import { Session } from '../src/game/session'
 import { Boat, boatLungePosition, boatLungeTiming, boatSharkLength, boatSharkPose, harbor, harborContact,
   planBoatLunge, reefContact, rockProfiles, type ReefHazard } from '../src/sim/boat'
-import { Rescue } from '../src/sim/rescue'
-import { waveHeight } from '../src/sim/water'
+import { Rescue, rescueBoardX, rescuePlaneZ } from '../src/sim/rescue'
+import { setWaveIntensity, waveHeight, waveIntensity, waveUniforms } from '../src/sim/water'
 import type { GameEvent } from '../src/game/events'
 import { tuning } from '../src/app/tuning'
 import { toCsv } from '../src/persistence/scores'
@@ -62,6 +62,49 @@ describe('complete run', () => {
     for (let i = 0; i < 30; i++) r.tick(tuning.tick, { ...neutralIntent, gripClosed: true }, defaultAssists)
     r.tick(tuning.tick, neutralIntent, defaultAssists)
     expect(r.grip).toBe(true)
+  })
+  it('can winch a swimmer out of a deep trough at maximum wave intensity', () => {
+    const previous = waveUniforms.waveIntensity.value
+    setWaveIntensity(waveIntensity.max)
+    try {
+      const rescue = new Rescue(tuning.seed, () => {})
+      // Find a trough well below the pickup range of the original 25-unit cable.
+      const times = Array.from({ length: 2400 }, (_, step) => step * tuning.tick)
+      const trough = rescue.survivors.filter(person => person.state === 'floating')
+        .map(swimmer => ({ swimmer, time: times.find(time => rescue.survivorY(swimmer, time + tuning.rescue.gripSeconds) < -1.1) }))
+        .find(sample => sample.time !== undefined)
+      if (trough?.time === undefined) throw new Error('No swimmer reached a deep trough.')
+      const { swimmer } = trough
+      rescue.time = trough.time
+      rescue.x = swimmer.x
+      rescue.cable = tuning.rescue.cableMax
+      for (let i = 0; i < 30 && swimmer.state !== 'carried'; i++) {
+        rescue.tick(tuning.tick, { ...neutralIntent, heliTargetX: swimmer.x / tuning.rescue.span,
+          winchTarget: rescue.winchTargetAt(rescue.survivorY(swimmer)), gripClosed: true }, { ...defaultAssists, aim: false })
+      }
+      expect(rescue.carried).toContain(swimmer)
+      expect(rescue.cable).toBeGreaterThan(25)
+    } finally {
+      setWaveIntensity(previous)
+    }
+  })
+  it('keeps swimmers on the winch plane and reachable from both ends of the board', () => {
+    const rescue = new Rescue(tuning.seed, () => {})
+    const swimmers = rescue.survivors.filter(person => person.state === 'floating')
+    expect(swimmers.filter(person => person.x < rescueBoardX - 6)).toHaveLength(2)
+    expect(swimmers.filter(person => person.x > rescueBoardX + 6)).toHaveLength(3)
+    const startX = new Map(swimmers.map(person => [person.id, person.x]))
+    for (let i = 0; i < 240; i++) rescue.tick(tuning.tick, neutralIntent, defaultAssists)
+    expect(swimmers.some(person => person.x !== startX.get(person.id))).toBe(true)
+    for (const swimmer of swimmers) expect(Math.abs(swimmer.x - startX.get(swimmer.id)!)).toBeLessThanOrEqual(0.281)
+    for (const person of rescue.survivors) {
+      expect(person.z).toBe(rescuePlaneZ)
+      expect(Math.abs(person.x)).toBeLessThan(tuning.rescue.span)
+      rescue.x = person.x
+      rescue.cable = tuning.rescue.cableMin
+        + (tuning.rescue.cableMax - tuning.rescue.cableMin) * rescue.winchTargetAt(rescue.survivorY(person))
+      expect(rescue.grabbable()).toContain(person)
+    }
   })
   it('computes time and integrity points only in eligible outcomes', () => {
     expect(scoreRun(8000, 125, 95, 75, true, 'completed')).toBe(10790)

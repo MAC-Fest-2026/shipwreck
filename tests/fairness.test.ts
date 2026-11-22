@@ -10,7 +10,8 @@ it('evaluates 200 independent course and attack seeds', () => {
     const novice = replay(seed, run => {
       const intent = pilotBot(run)
       if (run.phase !== 'rescue' || run.rescue.time % 16 < 13.2) return intent
-      return { ...intent, heliTargetX: run.rescue.x / 80, winchTarget: (run.rescue.cable - 3) / 22, gripClosed: run.rescue.grip }
+      const rescue = run.rescue
+      return { ...intent, heliTargetX: rescue.x / 80, winchTarget: rescue.winchTargetAt(rescue.clawY), gripClosed: rescue.grip }
     })
     aggregate.saved += pilot.rescue.saved
     aggregate.lost += pilot.rescue.lost

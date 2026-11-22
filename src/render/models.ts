@@ -285,6 +285,9 @@ export class HelicopterModel {
 export function claw() {
   const root = new T.Group()
   oval(root, steel, 0, 0.16, 0, 0.38, 0.31, 0.38)
+  const cableAnchor = new T.Object3D()
+  cableAnchor.position.y = 0.45
+  root.add(cableAnchor)
   oval(root, trim, 0, -0.14, 0, 0.47, 0.13, 0.47)
   const jaws = Array.from({ length: 3 }, (_, index) => {
     const base = new T.Group()
@@ -300,7 +303,7 @@ export function claw() {
     mesh(jaw, new T.TubeGeometry(path, 10, 0.104, 6), trim, 0, 0, 0)
     return jaw
   })
-  return { root, jaws }
+  return { root, jaws, cableAnchor }
 }
 
 export function rescueVessel() {
