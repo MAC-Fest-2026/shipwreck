@@ -33,13 +33,23 @@ export class AudioClips {
   }
 
   private async decode(path: string) {
+    const request = new AbortController()
+    const abort = () => request.abort()
+    let timeout = setTimeout(abort, 1500)
     try {
-      const response = await fetch(base + path, { signal: AbortSignal.timeout(1500), headers: { Accept: 'audio/*, application/octet-stream' } })
+      const response = await fetch(base + path, { signal: request.signal, headers: { Accept: 'audio/*, application/octet-stream' } })
       if (!response.ok || response.headers.get('content-type')?.includes('text/html')) return null
+      // Keep extension probes short and give larger recordings more time to transfer.
+      if (Number(response.headers.get('content-length')) > 1024 * 1024) {
+        clearTimeout(timeout)
+        timeout = setTimeout(abort, 15_000)
+      }
       const buffer = await this.context.decodeAudioData(await response.arrayBuffer())
       return buffer.duration > 0 ? buffer : null
     } catch {
       return null
+    } finally {
+      clearTimeout(timeout)
     }
   }
 }

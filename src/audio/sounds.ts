@@ -2,11 +2,12 @@ import { seededRandom } from '../core/math'
 import { bufferTo, gainTo, type AudioClips } from './clips'
 
 type SetPitch = (rate: number, time: number) => void
+type PrepareLoop = (buffer: AudioBuffer) => { trim: number; loopStart: number }
 
 export function loopSlot(audio: AudioContext, clips: AudioClips, slug: string, output: AudioNode,
-  fallback: (output: AudioNode) => SetPitch | void) {
+  fallback: (output: AudioNode) => SetPitch | void, prepare?: PrepareLoop) {
   const gain = gainTo(audio, output, 0)
-  const recording = clips.override(slug)
+  const recording = clips.override(slug).then(buffer => buffer && { buffer, ...prepare?.(buffer) })
   let started = false
   let level = 0
   let rate = 1
@@ -23,15 +24,16 @@ export function loopSlot(audio: AudioContext, clips: AudioClips, slug: string, o
     }
     if (started || level <= 0) return
     started = true
-    void recording.then(buffer => {
+    void recording.then(clip => {
       if (level <= 0) { started = false; return }
       const start = audio.currentTime
       gain.gain.cancelScheduledValues(start)
       gain.gain.setValueAtTime(0, start)
       gain.gain.setTargetAtTime(level, start, smoothing)
-      if (buffer) {
-        const source = bufferTo(audio, gain, buffer)
+      if (clip) {
+        const source = bufferTo(audio, clip.trim === undefined ? gain : gainTo(audio, gain, clip.trim), clip.buffer)
         source.loop = true
+        source.loopStart = clip.loopStart ?? 0
         source.playbackRate.value = rate
         setPitch = (pitch, t) => source.playbackRate.setTargetAtTime(pitch, t, 0.17)
         source.start()
@@ -41,6 +43,29 @@ export function loopSlot(audio: AudioContext, clips: AudioClips, slug: string, o
       }
     })
   }
+}
+
+export function prepareHelicopterLoop(buffer: AudioBuffer) {
+  const frames = Math.min(Math.round(buffer.sampleRate * 0.12), Math.floor(buffer.length / 4))
+  const overlap = frames >= 2 ? frames : 0
+  const fade = new Float32Array(overlap)
+  for (let i = 0; i < overlap; i++) fade[i] = Math.sin(i / (overlap - 1) * Math.PI / 2)
+  let peak = 0
+  let energy = 0
+  for (let channel = 0; channel < buffer.numberOfChannels; channel++) {
+    const samples = buffer.getChannelData(channel)
+    const tail = samples.length - overlap
+    // The tail blends into the head. Playback wraps to the next unblended sample.
+    for (let i = 0; i < overlap; i++) samples[tail + i] = samples[tail + i] * fade[overlap - 1 - i] + samples[i] * fade[i]
+    for (const sample of samples) {
+      peak = Math.max(peak, Math.abs(sample))
+      energy += sample * sample
+    }
+  }
+  const rms = Math.sqrt(energy / (buffer.numberOfChannels * buffer.length))
+  // Calibrate the recording against the rain while leaving headroom at full rotor gain.
+  const trim = peak > 0 ? Math.min(0.40 / rms, 2.8 / peak, 6) : 1
+  return { trim, loopStart: overlap / buffer.sampleRate }
 }
 
 export function noiseBuffer(audio: AudioContext, seconds: number, smoothing: number, seed: number) {

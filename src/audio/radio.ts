@@ -3,7 +3,7 @@ import type { EventType, GameEvent } from '../game/events'
 import type { ScenePhase } from '../game/session'
 import { AudioClips, bufferTo, gainTo } from './clips'
 import {
-  effects as synthesize, loopEngine, loopMusic, loopRain, loopSlot, noiseBuffer, type EffectSlot,
+  effects as synthesize, loopEngine, loopMusic, loopRain, loopSlot, noiseBuffer, prepareHelicopterLoop, type EffectSlot,
   radioLeadIn, radioSlots, radioTail, radioTransmission,
 } from './sounds'
 
@@ -91,7 +91,7 @@ function makeMix(audio: AudioContext, settings: SoundSettings) {
     audio, clips, master, music, effects, voice, noise, radio, radioClips,
     rain: loopSlot(audio, clips, 'rain-ambience', effects, out => loopRain(audio, out)),
     musicLoop: loopSlot(audio, clips, 'tension-music', music, out => loopMusic(audio, out)),
-    helicopter: loopSlot(audio, clips, 'helicopter-engine', effects, out => loopEngine(audio, out, noise, true)),
+    helicopter: loopSlot(audio, clips, 'helicopter-engine', effects, out => loopEngine(audio, out, noise, true), prepareHelicopterLoop),
     boat: loopSlot(audio, clips, 'boat-engine', effects, out => loopEngine(audio, out, noise, false)),
   }
 }
