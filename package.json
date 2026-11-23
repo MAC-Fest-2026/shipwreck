@@ -1,6 +1,7 @@
 {
   "name": "shipwreck",
   "version": "1.0.0",
+  "description": "Fly a rescue helicopter, winch survivors aboard, and pilot a rescue boat to safety using webcam gestures or keyboard and mouse.",
   "type": "module",
   "private": true,
   "packageManager": "pnpm@11.5.3",

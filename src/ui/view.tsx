@@ -6,6 +6,8 @@ import type { Settings } from '../app/settings'
 import { clamp, clockLabel } from '../core/math'
 import { instructions } from '../input/calibration'
 import { courseLabel } from '../sim/boat'
+import { maxSurvivors } from '../sim/rescue'
+import { waveIntensity } from '../sim/water'
 import { isCinematic } from '../game/session'
 import { downloadRuns } from '../persistence/scores'
 import type { RunRecord } from '../game/score'
@@ -16,10 +18,11 @@ const presets = ['MAVERICK', 'SKYLARK', 'TIDERUNNER', 'STORMHAWK']
 const R = tuning.rescue
 const clock = '◷'
 
-function Button({ children, action, variant = 'secondary', disabled = false, label }: {
-  children: ComponentChildren; action: () => void; variant?: string; disabled?: boolean; label?: string
+function Button({ children, action, variant = 'secondary', disabled = false, label, pressed }: {
+  children: ComponentChildren; action: () => void; variant?: string; disabled?: boolean; label?: string; pressed?: boolean
 }) {
-  return <button type="button" class={`action ${variant}`} data-gesture aria-label={label} disabled={disabled} onClick={action}>{children}</button>
+  return <button type="button" class={`action ${variant}`} data-gesture aria-label={label} aria-pressed={pressed}
+    disabled={disabled} onClick={action}>{children}</button>
 }
 
 function Beacon({ live = false }: { live?: boolean }) {
@@ -179,16 +182,20 @@ function Briefing({ c }: { c: Controller }) {
       <article>
         <p class="kicker mono">02 / ISLAND RUN</p><h3>Follow the light.</h3>
         <dl><dt>Steer</dt><dd>{hand ? 'Tilt your palms like a wheel' : 'A / D'}</dd>
-          <dt>Throttle</dt><dd>{hand ? 'Raise / lower both palms' : 'W / S'}</dd>
+          <dt>Throttle</dt><dd>{hand ? 'Raise / lower both palms' : c.settings.boatThrottle === 'hold' ? 'Hold W / brake with S' : 'W / S'}</dd>
           <dt>Pause</dt><dd>{hand ? 'Hold both thumbs up' : 'Esc'}</dd></dl>
         <p>Turn away from shark wakes. Lower throttle on approach and aim between the channel lights.</p>
       </article>
     </div>
     {c.status && <p role="status" class="status">{c.status}</p>}
     <div class="actions">
-      <Button variant="primary" disabled={c.status === 'Loading rescue scene…'} action={() => void c.launch(true)}>Flight school <span>→</span></Button>
-      <Button disabled={c.status === 'Loading rescue scene…'} action={() => void c.launch(false)}>Start mission <span>→</span></Button>
-      <Button variant="quiet" action={() => c.back()}>Back</Button>
+      <Button variant="primary" disabled={!!c.loadingStart} action={() => void c.launch(true)}>
+        {c.loadingStart === 'school' ? <span role="status">Loading 3D assets…</span> : <>Flight school <span>→</span></>}
+      </Button>
+      <Button disabled={!!c.loadingStart} action={() => void c.launch(false)}>
+        {c.loadingStart === 'mission' ? <span role="status">Loading 3D assets…</span> : <>Start mission <span>→</span></>}
+      </Button>
+      <Button variant="quiet" disabled={!!c.loadingStart} action={() => c.back()}>Back</Button>
     </div>
   </section>
 }
@@ -200,11 +207,16 @@ function UserSettings({ c }: { c: Controller }) {
     ['aim', 'Pickup assist'], ['steering', 'Steering assist'], ['winchOnly', 'Automatic claw'],
   ]
   const volumes = [['master', 'Master'], ['music', 'Music'], ['effects', 'Effects'], ['voice', 'Voice']] as const
+  const wavePercent = Math.round(c.settings.waveIntensity * 100)
+  const waveStep = Math.round(waveIntensity.step * 100)
+  const adjustWaves = (direction: number) => c.changeSetting('waveIntensity', (wavePercent + direction * waveStep) / 100)
   return <section class="panel settings-panel" aria-labelledby="settings-title">
     <p class="kicker mono"><Beacon live /> CONTROL PANEL</p>
     <h2 id="settings-title">Settings</h2>
     <div class="settings-grid">
       <div class="settings-block"><h3>Sound</h3>
+        <div class="setting-row"><span>Mute all sound</span><Button label="Mute all sound" pressed={c.settings.muted}
+          action={() => c.changeSetting('muted', !c.settings.muted)}>{c.settings.muted ? 'On' : 'Off'}</Button></div>
         {volumes.map(([key, label]) => <div class="setting-row" key={key}><span>{label}</span><div class="stepper">
           <Button variant="letter-button" label={`Lower ${label} volume`} action={() => c.changeSetting(key, clamp(c.settings[key] - 0.1))}>−</Button>
           <strong>{Math.round(c.settings[key] * 100)}%</strong>
@@ -214,8 +226,33 @@ function UserSettings({ c }: { c: Controller }) {
           c.settings.quality === 'low' ? 'medium' : c.settings.quality === 'medium' ? 'high' : 'low')}>{c.settings.quality} ↻</Button></div>
         <div class="setting-row"><span>Cable stabilization</span><Button action={() => c.changeSetting('stabilization', c.settings.stabilization ? 0 : 0.35)}>
           {c.settings.stabilization ? '35%' : 'Off'}</Button></div>
+        <div class="setting-row"><span>Survivor Count <small>· next mission</small></span><div class="stepper" role="group" aria-label="Survivor Count">
+          <Button variant="letter-button" label="Decrease survivor count" disabled={c.settings.survivorCount <= 1}
+            action={() => c.changeSetting('survivorCount', Math.max(1, c.settings.survivorCount - 1))}>−</Button>
+          <strong aria-live="polite">{c.settings.survivorCount}</strong>
+          <Button variant="letter-button" label="Increase survivor count" disabled={c.settings.survivorCount >= maxSurvivors}
+            action={() => c.changeSetting('survivorCount', Math.min(maxSurvivors, c.settings.survivorCount + 1))}>+</Button>
+        </div></div>
       </div>
-      <div class="settings-block"><h3>Display &amp; controls</h3><div class="switches">
+      <div class="settings-block"><h3>Display &amp; controls</h3>
+        <div class="setting-row"><span>Boat Throttle <small>· keyboard</small></span>
+          <Button label={`Boat Throttle, ${c.settings.boatThrottle === 'hold' ? 'Hold to Accelerate' : 'Cruise Throttle (Sticky)'}`}
+            action={() => c.changeSetting('boatThrottle', c.settings.boatThrottle === 'hold' ? 'sticky' : 'hold')}>
+            {c.settings.boatThrottle === 'hold' ? 'Hold to Accelerate' : 'Cruise Throttle (Sticky)'}
+          </Button>
+        </div>
+        <div class="setting-row"><span>Wave Intensity</span><div class="stepper" role="group" aria-label="Wave Intensity">
+          <Button variant="letter-button" label="Lower wave intensity" disabled={c.settings.waveIntensity <= waveIntensity.min}
+            action={() => adjustWaves(-1)}>−</Button>
+          <strong aria-live="polite">{wavePercent}%</strong>
+          <Button variant="letter-button" label="Raise wave intensity" disabled={c.settings.waveIntensity >= waveIntensity.max}
+            action={() => adjustWaves(1)}>+</Button>
+        </div></div>
+        <input type="range" aria-label="Wave Intensity" aria-valuetext={wavePercent + '%'}
+          class="wave-slider" min={waveIntensity.min * 100} max={waveIntensity.max * 100}
+          step={waveStep} value={wavePercent}
+          onInput={event => c.changeSetting('waveIntensity', event.currentTarget.valueAsNumber / 100)} />
+        <div class="switches">
         {switches.map(([key, label]) => <Button key={key} variant={c.settings[key] ? 'switch on' : 'switch'}
           action={() => c.changeSetting(key, !c.settings[key])}>{label}<span>{c.settings[key] ? 'On' : 'Off'}</span></Button>)}
       </div></div>
@@ -243,7 +280,7 @@ function Leaderboard({ c }: { c: Controller }) {
       <thead><tr><th>#</th><th>Callsign</th><th>Rank</th><th>Saved</th><th>Time</th><th>Score</th></tr></thead>
       <tbody>{list.slice(0, 10).map((r, i) => <tr key={r.runId} class={r.runId === c.recent?.runId ? 'latest' : ''}>
         <td>{String(i + 1).padStart(2, '0')}</td><th scope="row">{r.player.callsign}</th><td>{r.rank}</td>
-        <td>{r.survivors.saved}/8</td><td>{time(r.time.totalActiveMs)}</td><td>{number(r.score)}</td>
+        <td>{r.survivors.saved}/{r.survivors.total}</td><td>{time(r.time.totalActiveMs)}</td><td>{number(r.score)}</td>
       </tr>)}</tbody>
     </table> : <div class="empty-records"><span aria-hidden="true">◎</span><h3>No runs yet</h3><p>Scores and active times from this device will appear here.</p></div>}
     {c.status && <p role="status" class="status">{c.status}</p>}
@@ -359,7 +396,7 @@ function BoatHud({ c }: { c: Controller }) {
 
 const cineWords = {
   intro: ['THE WRECK', 'A distress call cuts through the storm.'],
-  arrival: ['SEARCH & RESCUE', 'The searchlight finds eight survivors.'],
+  arrival: ['SEARCH & RESCUE', 'The searchlight finds survivors on the wreckage.'],
   handoff: ['ALL ABOARD', 'Take the helm and follow the lighthouse.'],
   outro: ['LANDFALL', 'The first light breaks over the harbor.'],
 }
@@ -374,7 +411,7 @@ function Results({ c, record }: { c: Controller; record: RunRecord }) {
       <div><span class="mono">FINAL SCORE</span><strong>{number(record.score)}</strong></div>
     </div>
     <div class="result-stats">
-      <div><span class="mono">SAVED</span><strong>{record.survivors.saved}/8</strong></div>
+      <div><span class="mono">SAVED</span><strong>{record.survivors.saved}/{record.survivors.total}</strong></div>
       <div><span class="mono">LOST</span><strong>{record.survivors.lost}</strong></div>
       <div><span class="mono">ACTIVE TIME</span><strong>{time(record.time.totalActiveMs)}</strong></div>
       <div><span class="mono">HULL</span><strong>{record.stats.hullRemaining}%</strong></div>

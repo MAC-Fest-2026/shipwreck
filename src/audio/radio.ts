@@ -1,193 +1,418 @@
-import { clamp, seededRandom } from '../core/math'
-import type { GameEvent, EventType } from '../game/events'
+import { clamp, lerp } from '../core/math'
+import type { EventType, GameEvent } from '../game/events'
+import type { ScenePhase } from '../game/session'
+import { AudioClips, bufferTo, dialogueDelivery, gainTo, type DialogueEmotion } from './clips'
+import {
+  boatEngineMix, earlyReflections, effects as synthesize, loopEngine, loopMusic, loopRain, loopSlot,
+  noiseBuffer, prepareEngineLoop, recordingGain, radioLeadIn, radioSlots, radioTail, radioTransmission,
+  survivorChannel, voiceFilter, voiceTake, type EffectSlot,
+} from './sounds'
 
 const names: Record<string, string> = {
   reyes: 'Pilot Reyes', oduya: 'Captain Oduya', mara: 'Mara Voss', elias: 'Elias Rook', dev: 'Dev Kapoor',
   ana: 'Ana Kapoor', priya: 'Priya Nair', jay: 'Jay Okafor', tommy: 'Tommy Ricci', hollis: 'Hollis Brandt',
 }
+
 interface Line {
   id: string; speaker: string; text: string; priority: number; cooldownMs: number; maxPlays: number; audio?: string
+  emotion?: DialogueEmotion
   trigger: { event: EventType }
 }
+
+interface VoiceCue {
+  line: Line
+  aboard: boolean
+  offset: number
+  at: number
+}
+
 export type Subtitle = { name: string; text: string; end: number; priority: number }
-export type SoundSettings = { master: number; music: number; effects: number; voice: number; spoken: boolean }
+export type SoundSettings = { master: number; music: number; effects: number; voice: number; spoken: boolean; muted: boolean }
+
+interface SoundScene {
+  active: boolean
+  phase?: ScenePhase
+  pressure: number
+  flightSpeed: number
+  boatSpeed: number
+  throttle: number
+}
+
+const radioSpeaker = (speaker: string) => speaker === 'reyes' || speaker === 'oduya'
+const deckCalls = new Set<EventType>(['SURVIVOR_DELIVERED', 'ALL_ABOARD', 'BOAT_HAZARD',
+  'BOAT_COLLISION', 'LUNGE_WARNING', 'ISLAND_SIGHTED', 'LANDED'])
+const voiceGapMs = 650
+const voiceQueueMs = 3200
+const rotorFadeSeconds = 7
+const platformSplashLevel = 1.32
+const effectCooldownMs: Partial<Record<EffectSlot, number>> = { 'boat-rock-hit': 650, 'boat-shark-hit': 460, 'water-splash': 180 }
 const base = import.meta.env.BASE_URL
 
+function effectFor(event: GameEvent): EffectSlot | undefined {
+  switch (event.type) {
+    case 'CLAW_CLOSED': case 'CLAW_OPENED': return 'claw-click'
+    case 'SURVIVOR_DELIVERED': case 'LANDED': case 'QUICK_SAVE': return 'success-chime'
+    case 'SHARK_TELEGRAPH': case 'LUNGE_WARNING': case 'MEGALODON_WARNING': return 'danger-warning'
+    case 'SHARK_STRIKE': case 'WATER_SPLASH': return 'water-splash'
+    case 'BOAT_COLLISION':
+      if (event.impact === 'rock' || event.impact === 'pier' || event.impact === 'shark') return 'boat-rock-hit'
+      return 'impact-thud'
+  }
+}
+
+function impactMix(event: GameEvent) {
+  const { speed, damage, shark } = event.impactDetails ?? { speed: 0, damage: 0 }
+  if (shark) {
+    const severity = clamp(damage / (shark === 'megalodon' ? 35 : 24))
+    return { level: lerp(0.16, 1.15, severity), rate: lerp(1.1, 0.74, severity), bass: severity * 7 }
+  }
+  const severity = clamp(speed / 16 * 0.62 + damage / 25 * 0.38)
+  return { level: lerp(0.08, 1.06, severity), rate: lerp(1.18, 0.77, severity), bass: severity * 6 }
+}
+
+function splashMix(event: GameEvent) {
+  if (event.boatSplash?.shark === 'megalodon') {
+    const reentry = event.boatSplash.stage === 'reentry'
+    return { level: platformSplashLevel * (reentry ? 0.35 : 0.33),
+      rate: reentry ? 0.77 : 0.83, bass: reentry ? 4 : 3, heavy: true }
+  }
+  if (event.boatSplash) return { level: platformSplashLevel * 0.30, rate: 1.03, bass: 0 }
+  if (event.heavySplash) return { level: platformSplashLevel, rate: 0.72, bass: 5 }
+  const impact = event.impactDetails && impactMix(event)
+  return impact ? { level: impact.level * 0.7, rate: impact.rate, bass: impact.bass * 0.45 }
+    : { level: 0.38, rate: 1.05, bass: 0 }
+}
+
+function radioChannel(audio: AudioContext, output: AudioNode) {
+  const highpass = voiceFilter(audio, 'highpass', 250)
+  const warmth = voiceFilter(audio, 'peaking', 440, 2.1, 0.92)
+  const drive = audio.createWaveShaper()
+  drive.curve = Float32Array.from({ length: 257 }, (_, i) => Math.tanh((i / 128 - 1) * 1.10))
+  drive.oversample = '2x'
+  const presence = voiceFilter(audio, 'peaking', 1740, 2.8, 0.88)
+  const lowpass = voiceFilter(audio, 'lowpass', 3500)
+  const compressor = audio.createDynamicsCompressor()
+  compressor.threshold.value = -17
+  compressor.knee.value = 16
+  compressor.ratio.value = 2.4
+  compressor.attack.value = 0.005
+  compressor.release.value = 0.085
+  highpass.connect(warmth).connect(drive).connect(presence).connect(lowpass).connect(compressor).connect(output)
+  earlyReflections(audio, compressor, output, 2380, [[0.018, 0.13, -0.20], [0.039, 0.072, 0.23], [0.062, 0.036, -0.13]])
+  return highpass
+}
+
+function makeMix(audio: AudioContext, settings: SoundSettings) {
+  const clips = new AudioClips(audio)
+  const master = gainTo(audio, audio.destination, settings.muted ? 0 : clamp(settings.master))
+  const music = gainTo(audio, master, clamp(settings.music))
+  const effects = gainTo(audio, master, clamp(settings.effects))
+  const actionEffects = gainTo(audio, master, clamp(settings.effects))
+  const limiter = audio.createDynamicsCompressor()
+  limiter.threshold.value = -8
+  limiter.knee.value = 7
+  limiter.ratio.value = 6
+  limiter.attack.value = 0.003
+  limiter.release.value = 0.14
+  limiter.connect(actionEffects)
+  const voice = gainTo(audio, master, settings.spoken ? clamp(settings.voice) : 0)
+  const noise = noiseBuffer(audio, 1, 0, 402)
+  const radio = radioChannel(audio, voice)
+  const deck = survivorChannel(audio, voice, true)
+  const water = survivorChannel(audio, voice, false)
+
+  for (const slug of Object.keys(synthesize)) void clips.override(slug)
+  const radioClips = Promise.all(radioSlots.map(slug => clips.override(slug)))
+  return {
+    audio, clips, master, music, effects, actionEffects, limiter, voice, noise, radio, radioClips, deck, water,
+    rain: loopSlot(audio, clips, 'rain-ambience', effects, out => loopRain(audio, out)),
+    musicLoop: loopSlot(audio, clips, 'tension-music', music, out => loopMusic(audio, out)),
+    helicopter: loopSlot(audio, clips, 'helicopter-engine', effects, out => loopEngine(audio, out, noise, true), prepareEngineLoop),
+    boat: loopSlot(audio, clips, 'boat-engine', limiter, out => loopEngine(audio, out, noise, false), prepareEngineLoop),
+  }
+}
+
 export class Radio {
-  private audio?: AudioContext
-  private master?: GainNode
-  private music?: GainNode
-  private effects?: GainNode
-  private voiceBus?: GainNode
-  private voiceSource?: AudioBufferSourceNode
-  private requestVoice?: AbortController
-  private ambience?: GainNode
-  private rumble?: GainNode
-  private swell?: GainNode
-  private drone?: OscillatorNode
-  private speech?: SpeechSynthesisUtterance
+  private mix?: ReturnType<typeof makeMix>
   private lines: Line[] = []
-  private played = new Map<string, number>()
-  private last = new Map<string, number>()
+  private readonly played = new Map<string, number>()
+  private readonly lastLine = new Map<string, number>()
+  private readonly lastSpeaker = new Map<string, number>()
+  private readonly lastEffect = new Map<EffectSlot, { at: number; level: number }>()
+  private readonly effectGains = new WeakMap<AudioBuffer, number>()
+  private queued?: VoiceCue
+  private readonly lifted = new Set<string>()
+  private readonly aboard = new Set<string>()
+  private cancelVoice?: () => void
+  private speaking = false
+  private voiceReadyAt = 0
+  private soundEpoch = 0
   private now = 0
-  private settings: SoundSettings = { master: 0.62, music: 0.42, effects: 0.70, voice: 0.75, spoken: true }
+  private phase?: ScenePhase
+  private rotorLevel = 0
+  private rotorFadeAt: number | null = null
+  private ducked = false
   subtitle: Subtitle | null = null
 
-  constructor() {
+  constructor(private settings: SoundSettings) {
     void fetch(base + 'dialogue/lines.en.json').then(response => response.json()).then((data: Line[]) => { this.lines = data }).catch(() => {})
   }
 
   unlock() {
-    if (this.audio) { void this.audio.resume().catch(() => {}); return }
+    if (this.mix) { void this.mix.audio.resume().catch(() => {}); return }
     try {
-      const audio = this.audio = new AudioContext()
-      const gain = (target: AudioNode, initial: number) => {
-        const node = audio.createGain()
-        node.gain.value = initial
-        node.connect(target)
-        return node
-      }
-      this.master = gain(audio.destination, this.settings.master)
-      this.music = gain(this.master, this.settings.music)
-      this.effects = gain(this.master, this.settings.effects)
-      this.voiceBus = gain(this.master, this.settings.voice)
-      this.ambience = gain(this.effects, 0)
-      this.rumble = gain(this.effects, 0)
-      this.swell = gain(this.music, 0)
-      const noise = audio.createBuffer(1, audio.sampleRate * 3, audio.sampleRate)
-      const data = noise.getChannelData(0)
-      const random = seededRandom(149)
-      let filtered = 0
-      for (let n = 0; n < data.length; n++) { filtered = 0.91 * filtered + (random() * 2 - 1) * 0.09; data[n] = filtered }
-      const wind = audio.createBufferSource()
-      wind.loop = true
-      wind.buffer = noise
-      wind.connect(this.ambience)
-      wind.start()
-      const rotor = this.drone = audio.createOscillator()
-      rotor.type = 'triangle'
-      rotor.frequency.value = 42
-      rotor.connect(this.rumble)
-      rotor.start()
-      const lfo = audio.createOscillator()
-      const pulse = audio.createGain()
-      pulse.gain.value = 0.018
-      lfo.frequency.value = 4.5
-      lfo.connect(pulse)
-      pulse.connect(this.rumble.gain)
-      lfo.start()
-      for (const [frequency, level] of [[43.65, 0.42], [65.41, 0.20], [87.3, 0.10]]) {
-        const note = audio.createOscillator()
-        note.type = 'sine'
-        note.frequency.value = frequency
-        note.connect(gain(this.swell, level))
-        note.start()
-      }
+      const audio = new AudioContext()
+      this.mix = makeMix(audio, this.settings)
+      this.applyVolumes()
       void audio.resume().catch(() => {})
     } catch { /* Subtitles remain available when audio hardware is unavailable. */ }
   }
 
-  configure(settings: SoundSettings) { this.settings = settings }
-  update(now: number, active: boolean, boat: boolean, pressure: number, speed: number) {
+  configure(settings: SoundSettings) {
+    const speechVolumeChanged = this.settings.voice !== settings.voice || this.settings.master !== settings.master
+    this.settings = settings
+    if (!this.canSpeak || this.speaking && speechVolumeChanged) this.stopPlayback()
+    this.applyVolumes()
+  }
+
+  private get canSpeak() {
+    return this.settings.spoken && !this.settings.muted && this.settings.voice > 0 && this.settings.master > 0
+  }
+
+  private applyVolumes() {
+    const mix = this.mix
+    if (!mix) return
+    const t = mix.audio.currentTime
+    this.ducked = !!this.subtitle
+    mix.master.gain.setTargetAtTime(this.settings.muted ? 0 : clamp(this.settings.master), t, 0.06)
+    mix.music.gain.setTargetAtTime(clamp(this.settings.music) * (this.ducked ? 0.51 : 1), t, 0.15)
+    mix.effects.gain.setTargetAtTime(clamp(this.settings.effects) * (this.ducked ? 0.64 : 1), t, 0.15)
+    mix.actionEffects.gain.setTargetAtTime(clamp(this.settings.effects) * (this.ducked ? 0.87 : 1), t, 0.15)
+    mix.voice.gain.setTargetAtTime(this.settings.spoken ? clamp(this.settings.voice) : 0, t, 0.06)
+  }
+
+  update(now: number, { active, phase, pressure, flightSpeed, boatSpeed, throttle }: SoundScene) {
     this.now = now
-    if (this.subtitle && now > this.subtitle.end) this.stopLine()
-    if (!this.audio || !this.master || !this.music || !this.effects || !this.ambience || !this.rumble || !this.swell || !this.drone) return
-    const t = this.audio.currentTime
-    this.master.gain.setTargetAtTime(clamp(this.settings.master), t, 0.12)
-    this.music.gain.setTargetAtTime(this.settings.music * (this.subtitle ? 0.51 : 1), t, 0.15)
-    this.voiceBus?.gain.setTargetAtTime(this.settings.voice, t, 0.12)
-    this.effects.gain.setTargetAtTime(this.settings.effects * (this.subtitle ? 0.64 : 1), t, 0.15)
-    this.ambience.gain.setTargetAtTime(active ? 0.35 + 0.24 * pressure : 0.075, t, 0.24)
-    this.rumble.gain.setTargetAtTime(active ? 0.039 + speed * 0.018 : 0, t, 0.18)
-    this.swell.gain.setTargetAtTime(active ? 0.09 + pressure * 0.116 : 0.05, t, 0.28)
-    this.drone.frequency.setTargetAtTime(boat ? 31 + speed * 32 : 44 + speed * 4.5, t, 0.18)
-  }
-
-  event(event: GameEvent, eligible: Set<string>) {
-    if (['CLAW_CLOSED', 'CLAW_OPENED'].includes(event.type)) this.tone(114, 67, 0.14, 0.13, event.x)
-    if (['SURVIVOR_DELIVERED', 'LANDED', 'QUICK_SAVE'].includes(event.type)) this.tone(330, 660, 0.37, 0.21, event.x)
-    if (['SHARK_TELEGRAPH', 'LUNGE_WARNING', 'MEGALODON_WARNING'].includes(event.type)) this.tone(89, 51, 0.66, 0.34, event.x)
-    if (['MEGALODON_BREACH', 'BOAT_COLLISION', 'SHARK_STRIKE'].includes(event.type)) this.tone(56, 26, 0.52, 0.46, event.x)
-    const candidates = this.lines.filter(line => line.trigger.event === event.type
-      && (['oduya', 'reyes'].includes(line.speaker) || eligible.has(line.speaker))
-      && (this.played.get(line.id) ?? 0) < line.maxPlays
-      && this.now - (this.last.get(line.speaker) ?? -Infinity) >= line.cooldownMs)
-    const line = candidates.find(line => line.speaker === event.id)
-      ?? candidates.sort((a, b) => (this.last.get(a.speaker) ?? -1e9) - (this.last.get(b.speaker) ?? -1e9))[0]
-    if (!line || this.subtitle && this.subtitle.priority >= line.priority) return
-    this.stopLine()
-    this.last.set(line.speaker, this.now)
-    this.played.set(line.id, (this.played.get(line.id) ?? 0) + 1)
-    this.subtitle = { name: names[line.speaker], text: line.text,
-      end: this.now + Math.max(1600, line.text.length * (1000 / 15)) + 350, priority: line.priority }
-    if (this.settings.spoken && this.audio?.state === 'running') void this.playLine(line)
-  }
-
-  private async playLine(line: Line) {
-    const audio = this.audio
-    const bus = this.voiceBus
-    const subtitle = this.subtitle
-    if (audio && bus && line.audio) {
-      const request = this.requestVoice = new AbortController()
-      try {
-        const response = await fetch(base + line.audio, { signal: request.signal })
-        if (!response.ok) throw new Error('Voice unavailable')
-        const decoded = await audio.decodeAudioData(await response.arrayBuffer())
-        if (request.signal.aborted || this.subtitle !== subtitle || !subtitle) return
-        subtitle.end = Math.max(subtitle.end, this.now + decoded.duration * 1000 + 150)
-        const source = this.voiceSource = audio.createBufferSource()
-        source.buffer = decoded
-        source.connect(bus)
-        source.start()
-        return
-      } catch {
-        if (request.signal.aborted || this.subtitle !== subtitle) return
-      }
+    this.phase = phase
+    if (!active) this.stopLine()
+    else if (phase === 'results') {
+      this.clearLine()
+      this.queued = undefined
     }
-    if (!window.speechSynthesis) return
-    const local = speechSynthesis.getVoices().filter(voice => voice.localService && /^en\b/.test(voice.lang))
-    if (!local.length) return
+    if (this.subtitle && now >= this.subtitle.end) this.clearLine()
+    if (this.queued && now - this.queued.at > voiceQueueMs) this.queued = undefined
+    if (this.queued && !this.subtitle && now >= this.voiceReadyAt) {
+      const cue = this.queued
+      this.queued = undefined
+      this.startLine(cue)
+    }
+    const mix = this.mix
+    if (!mix) return
+    if (this.ducked !== !!this.subtitle) this.applyVolumes()
+    mix.rain(active ? 0.35 + 0.24 * pressure : 0.075)
+    mix.musicLoop(active ? 0.09 + pressure * 0.116 : 0.05, 1, 0.28)
+
+    const flight = phase === 'school' || phase === 'arrival' || phase === 'rescue'
+    const departing = phase === 'handoff' || phase === 'boat'
+    const t = mix.audio.currentTime
+    if (departing) this.rotorFadeAt ??= t
+    else {
+      this.rotorFadeAt = null
+      this.rotorLevel = flight ? 0.14 + 0.055 * flightSpeed : 0
+    }
+    const fade = this.rotorFadeAt === null ? 1 : clamp(1 - (t - this.rotorFadeAt) / rotorFadeSeconds) ** 1.35
+    mix.helicopter(active ? this.rotorLevel * fade : 0, 0.95 + 0.16 * flightSpeed, 0.12)
+    const engine = boatEngineMix(throttle, boatSpeed)
+    mix.boat(active && phase === 'boat' ? engine.volume : 0, engine.rate, 0.22)
+  }
+
+  event(event: GameEvent, eligible: Set<string>, now: number, listenerX = 0) {
+    this.trackBoarding(event)
+    const offset = (event.x ?? listenerX) - listenerX
+    const slot = effectFor(event)
+    if (slot === 'boat-rock-hit') {
+      this.playEffect(slot, offset, now, impactMix(event), event.impact === 'shark' ? 'boat-shark-hit' : slot)
+      if (event.impact !== 'shark') this.playEffect('water-splash', offset, now, splashMix(event))
+    } else if (slot === 'water-splash') this.playEffect(slot, offset, now, splashMix(event))
+    else if (slot) this.playEffect(slot, offset, now)
+    const candidates = this.lines.filter(line => line.trigger.event === event.type
+      && (radioSpeaker(line.speaker) || eligible.has(line.speaker))
+      && (this.played.get(line.id) ?? 0) < line.maxPlays
+      && now - (this.lastLine.get(line.id) ?? -Infinity) >= line.cooldownMs
+      && now - (this.lastSpeaker.get(line.speaker) ?? -Infinity) >= line.cooldownMs)
+    const targeted = candidates.filter(line => line.speaker === event.id)
+    const line = (targeted.length ? targeted : candidates).sort((a, b) =>
+      (this.lastSpeaker.get(a.speaker) ?? -1e9) - (this.lastSpeaker.get(b.speaker) ?? -1e9)
+      || (this.lastLine.get(a.id) ?? -1e9) - (this.lastLine.get(b.id) ?? -1e9))[0]
+    if (!line || (this.subtitle?.priority ?? -Infinity) >= line.priority) return
+    if (this.queued && now - this.queued.at <= voiceQueueMs) {
+      // The first sighting and first charge are announced on the same tick.
+      if (this.queued.at === now && this.queued.line.trigger.event === 'SHARK_SPOTTED' && event.type === 'SHARK_TELEGRAPH') return
+      if (this.queued.line.priority >= line.priority) return
+    }
+    const aboard = this.aboard.has(line.speaker) || deckCalls.has(event.type)
+      || this.phase === 'boat' || this.phase === 'handoff' || this.phase === 'outro'
+    this.queued = { line, aboard, offset, at: now }
+  }
+
+  private trackBoarding({ type, id }: GameEvent) {
+    if (type === 'SURVIVOR_GRABBED' && id) this.lifted.add(id)
+    else if (type === 'WATER_DROP' && id) this.lifted.delete(id)
+    else if (type === 'SURVIVOR_LOST' && id) {
+      this.lifted.delete(id)
+      this.aboard.delete(id)
+    } else if (type === 'SURVIVOR_DELIVERED') {
+      // A dual lift emits one delivery event for the whole sling.
+      for (const survivor of this.lifted) this.aboard.add(survivor)
+      if (id) this.aboard.add(id)
+      this.lifted.clear()
+    }
+  }
+
+  private startLine(cue: VoiceCue) {
+    const { line } = cue
+    this.lastSpeaker.set(line.speaker, this.now)
+    this.lastLine.set(line.id, this.now)
+    this.played.set(line.id, (this.played.get(line.id) ?? 0) + 1)
+    const subtitle = this.subtitle = {
+      name: names[line.speaker], text: line.text, priority: line.priority,
+      end: this.now + Math.max(1600, line.text.length * (1000 / 15)) + 350,
+    }
+    if (this.canSpeak && this.mix?.audio.state === 'running') void this.playLine(this.mix, cue, subtitle)
+  }
+
+  private async playLine(mix: ReturnType<typeof makeMix>, { line, aboard, offset }: VoiceCue, subtitle: Subtitle) {
+    const isRadio = radioSpeaker(line.speaker)
+    const delivery = dialogueDelivery(line.emotion, isRadio)
     const i = Object.keys(names).indexOf(line.speaker)
-    this.speech = new SpeechSynthesisUtterance(line.text)
-    this.speech.voice = local[i % local.length]
-    this.speech.pitch = 0.81 + (i % 5) * 0.095
-    this.speech.rate = 0.95 + (i % 3) * 0.09
-    this.speech.volume = this.settings.voice * this.settings.master
-    speechSynthesis.speak(this.speech)
+    const pan = isRadio ? 0 : aboard ? ((i % 5) - 2) * 0.056 : clamp(offset / 72, -1, 1) * 0.62
+    const distance = isRadio || aboard ? 1 : 1 - 0.17 * clamp(Math.abs(offset) / 78)
+    const [buffer, radioClips] = await Promise.all([
+      mix.clips.override(line.id).then(override => override ?? (line.audio ? mix.clips.load(line.audio) : null)),
+      isRadio ? mix.radioClips : null,
+    ])
+    if (this.subtitle !== subtitle || !this.canSpeak) return
+    const captionEnd = subtitle.end
+    const transmission = () => radioClips && radioTransmission(mix.audio, mix.radio, mix.noise, radioClips)
+    const finish = (tx: ReturnType<typeof transmission>) => {
+      tx?.finish()
+      subtitle.end = Math.max(captionEnd, performance.now() + (tx ? radioTail * 1000 : 0) + 130)
+    }
+
+    if (buffer) {
+      const tx = transmission()
+      const lead = tx ? radioLeadIn : 0
+      const take = voiceTake(mix.audio, tx?.input ?? (aboard ? mix.deck : mix.water), delivery.presence, pan, distance)
+      const source = bufferTo(mix.audio, take.input, buffer)
+      source.playbackRate.value = delivery.rate
+      const seconds = lead + buffer.duration / delivery.rate + (tx ? radioTail : 0)
+      subtitle.end = Math.max(captionEnd, performance.now() + seconds * 1000 + 160)
+      const onEnd = () => { take.disconnect(); finish(tx) }
+      source.addEventListener('ended', onEnd, { once: true })
+      this.cancelVoice = () => {
+        source.removeEventListener('ended', onEnd)
+        source.stop()
+        take.disconnect()
+        tx?.cancel()
+      }
+      source.start(mix.audio.currentTime + lead)
+      return
+    }
+
+    // Browser speech uses the system output. The Web Audio graph supplies the carrier and mic clicks.
+    const speech = window.speechSynthesis
+    const local = speech?.getVoices().filter(voice => voice.localService && /^en\b/.test(voice.lang))
+    if (!local?.length) return
+    const utterance = new SpeechSynthesisUtterance(line.text)
+    utterance.voice = local[i % local.length]
+    utterance.pitch = (0.81 + (i % 5) * 0.095) * (1 + (delivery.rate - 1) * 0.55)
+    utterance.rate = (0.95 + (i % 3) * 0.09) * delivery.rate
+    utterance.volume = clamp(this.settings.voice * this.settings.master * distance * (isRadio || aboard ? 1 : 0.86))
+    let tx: ReturnType<typeof transmission> = null
+    this.speaking = true
+    subtitle.end = performance.now() + Math.max(4500, (captionEnd - this.now) * 2 + 1500)
+    utterance.onstart = () => { tx = transmission() }
+    utterance.onend = utterance.onerror = () => {
+      this.speaking = false
+      finish(tx)
+    }
+    this.cancelVoice = () => {
+      utterance.onstart = utterance.onend = utterance.onerror = null
+      if (this.speaking) speech.cancel()
+      this.speaking = false
+      tx?.cancel()
+    }
+    speech.speak(utterance)
+  }
+
+  private stopPlayback() {
+    this.cancelVoice?.()
+    this.cancelVoice = undefined
+  }
+
+  private clearLine() {
+    this.stopPlayback()
+    if (this.subtitle) this.voiceReadyAt = this.now + voiceGapMs
+    this.subtitle = null
   }
 
   stopLine() {
-    this.requestVoice?.abort()
-    this.requestVoice = undefined
-    this.voiceSource?.stop()
-    this.voiceSource = undefined
-    if (this.speech) window.speechSynthesis?.cancel()
-    this.speech = undefined
-    this.subtitle = null
+    this.soundEpoch++
+    this.clearLine()
+    this.queued = undefined
   }
 
   reset() {
     this.stopLine()
-    this.last.clear()
+    this.voiceReadyAt = 0
+    this.rotorLevel = 0
+    this.rotorFadeAt = null
+    this.phase = undefined
     this.played.clear()
+    this.lastSpeaker.clear()
+    this.lastEffect.clear()
+    this.lifted.clear()
+    this.aboard.clear()
   }
 
-  tone(from: number, to: number, duration: number, level: number, x = 0) {
-    if (!this.audio || !this.effects) return
-    const a = this.audio
-    const t = a.currentTime
-    const oscillator = a.createOscillator()
-    const gain = a.createGain()
-    const pan = a.createStereoPanner()
+  private playEffect(slot: EffectSlot, x: number, now: number, profile?: { level: number; rate: number; bass: number; heavy?: boolean },
+    fallback = slot) {
+    const mix = this.mix
+    if (!mix || mix.audio.state !== 'running' || this.settings.muted || this.settings.effects <= 0 || this.settings.master <= 0) return
+    const { level, rate, bass } = profile ?? { level: 0.61, rate: 1, bass: 0 }
+    const previous = this.lastEffect.get(slot)
+    if (previous && now - previous.at < (effectCooldownMs[slot] ?? 0) && level < previous.level * 1.45) return
+    this.lastEffect.set(slot, { at: now, level })
+    const { audio, clips } = mix
+    const pan = audio.createStereoPanner()
     pan.pan.value = clamp(x / 80, -1, 1) * 0.75
-    oscillator.type = from < 90 ? 'triangle' : 'sine'
-    oscillator.frequency.setValueAtTime(from, t)
-    oscillator.frequency.exponentialRampToValueAtTime(to, t + duration)
-    gain.gain.setValueAtTime(0.001, t)
-    gain.gain.exponentialRampToValueAtTime(level, t + Math.min(duration * 0.28, 0.065))
-    gain.gain.exponentialRampToValueAtTime(0.001, t + duration)
-    oscillator.connect(gain).connect(pan).connect(this.effects)
-    oscillator.start(t)
-    oscillator.stop(t + duration + 0.01)
+    pan.connect(profile ? mix.limiter : mix.effects)
+    const buffer = clips.readyOverride(slot) ?? clips.readyOverride(fallback)
+    const filter = bass > 0 ? voiceFilter(audio, 'lowshelf', 320, bass) : null
+    filter?.connect(pan)
+    const gain = gainTo(audio, filter ?? pan, level)
+    const dispose = () => { gain.disconnect(); filter?.disconnect(); pan.disconnect() }
+    const t = audio.currentTime
+    if (!buffer) {
+      synthesize[fallback](audio, gain, t, mix.noise, profile?.heavy ?? level >= 0.75)
+      setTimeout(dispose, 850)
+      return
+    }
+    const source = bufferTo(audio, gain, buffer)
+    // Impact recordings can contain several takes separated by silence. Play a single hit.
+    const duration = slot === 'boat-rock-hit' ? Math.min(2.55, buffer.duration) : buffer.duration
+    if (profile) {
+      const trim = this.effectGains.get(buffer) ?? recordingGain(buffer, duration)
+      this.effectGains.set(buffer, trim)
+      gain.gain.value *= trim
+    }
+    source.playbackRate.value = rate
+    if (duration < buffer.duration) {
+      const stop = t + duration / rate
+      gain.gain.setValueAtTime(gain.gain.value, stop - 0.12)
+      gain.gain.linearRampToValueAtTime(0, stop)
+    }
+    source.addEventListener('ended', dispose, { once: true })
+    source.start(t, 0, duration)
   }
 }

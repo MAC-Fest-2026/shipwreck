@@ -1,6 +1,7 @@
 import { tuning } from '../app/tuning'
 import { clamp } from '../core/math'
 import { neutralIntent, type ControlIntent } from '../input/intent'
+import { boatLungePosition, boatLungeTiming } from '../sim/boat'
 import { Session } from './session'
 
 export const defaultAssists = { aim: true, steering: true, stabilization: 0.35, winchOnly: false }
@@ -12,7 +13,7 @@ export function pilotBot(run: Session): ControlIntent {
     const span = tuning.rescue.span
     if (r.carried.length) {
       const over = r.overDeck && Math.abs(r.x - 52) < 2.2 && Math.abs(r.velocity) < 3
-      return { ...neutralIntent, heliTargetX: 52 / span, winchTarget: over ? 1 : 0.79,
+      return { ...neutralIntent, heliTargetX: 52 / span, winchTarget: r.winchTargetAt(over ? r.deckY + 1.1 : 5.6),
         gripClosed: !(over && r.clawY - r.deckY < 1.85) }
     }
     const waiting = r.survivors.filter(s => s.state === 'floating' || s.state === 'debris')
@@ -25,11 +26,13 @@ export function pilotBot(run: Session): ControlIntent {
     // Hold a settled position throughout the closing animation.
     const near = Math.abs(r.clawX - target) < (partner ? 0.34 : 0.74)
       && r.grabbable().includes(xTarget) && Math.abs(r.velocity) < 1.25
-    return { ...neutralIntent, heliTargetX: target / span, winchTarget: 1, gripClosed: near }
+    return { ...neutralIntent, heliTargetX: target / span, winchTarget: r.winchTargetAt(r.survivorY(xTarget)), gripClosed: near }
   }
   if (run.phase === 'boat') {
     const warning = b.lunges.find(l => l.time >= 0 && !l.ended)
-    const x = warning ? (warning.x <= 0 ? 8 : -8) : 0
+    const route = b.reefRouteX(b.z + 18)
+    const strikeX = warning ? boatLungePosition(warning, boatLungeTiming.strike).x : route
+    const x = warning ? route + (route < strikeX ? -1 : 1) * (Math.abs(route) > 5 ? 6.25 : 8) : route
     return { ...neutralIntent, steer: clamp((x - b.x) * 0.09 - b.heading * 1.65, -1, 1),
       throttle: b.z > 875 ? 0 : 0.69 }
   }

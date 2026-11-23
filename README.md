@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>Fly into the storm. Pull people from the water. Get them home.</strong><br />
-  A cinematic browser rescue game controlled with your two palms.
+  A cinematic browser rescue game you can play with webcam hand gestures or keyboard and mouse.
 </p>
 
 <p align="center">
@@ -61,19 +61,19 @@ Camera access needs **localhost or HTTPS**. Use the local server rather than ope
 
 ## 02 / Eight lives. One way home.
 
-A passenger ship has broken apart. Survivors cling to wreckage. Sharks circle below. You arrive with a helicopter, a rescue claw, and very little time.
+A passenger ship is sinking, with damage along the hull and stern. Survivors cling to a plank or tread water among the wreckage. Sharks circle below. You arrive with a helicopter, a rescue claw, and very little time.
 
 <table>
   <tr>
     <td width="50%" valign="top">
       <h3>01 — Fly + rescue</h3>
-      <p>Hold the helicopter steady. Lower the winch. Close the claw over a survivor, lift them clear, and release low over the green rescue deck.</p>
-      <p><strong>The longer you wait, the closer the sharks get.</strong></p>
+      <p>The helicopter banks into turns and flares as you slow. Hold steady, close the claw over a survivor, and release low over the green rescue deck.</p>
+      <p><strong>Brace as the 30 m Megalodon breaches beside the plank. The impact throws a swell that breaks it apart.</strong></p>
     </td>
     <td width="50%" valign="top">
       <h3>02 — Take the helm</h3>
-      <p>Step into the boat's cockpit. Thread the wreckage, turn away from shark wakes, follow the lighthouse, and slow down for landfall.</p>
-      <p><strong>The rescue ends when you reach the island.</strong></p>
+      <p>Take the wheel at a modern marine helm with radar, chart, and engine displays. Thread the reefs and turn away from recurring shark and Megalodon lunges.</p>
+      <p><strong>The sharks break off about 60 m from shore. Follow the lighthouse, slow down, and moor to the left of the pier.</strong></p>
     </td>
   </tr>
 </table>
@@ -81,7 +81,7 @@ A passenger ship has broken apart. Survivors cling to wreckage. Sharks circle be
 <p align="center">
   <picture>
     <source media="(prefers-reduced-motion: reduce)" srcset="docs/media/rescue.png" />
-    <img src="docs/media/mission-preview.gif" alt="Actual gameplay: a helicopter winches survivors above the wreck, then the rescue boat heads toward the island from the cockpit." width="960" />
+    <img src="docs/media/mission-preview.gif" alt="Gameplay replay: a helicopter winches survivors wearing orange life jackets, then the rescue boat navigates the swells from its multi-screen helm." width="960" />
   </picture>
   <br />
   <sub>ACTUAL GAMEPLAY · BUILT-IN REPLAY · WEBGL2</sub><br />
@@ -92,12 +92,26 @@ A passenger ship has broken apart. Survivors cling to wreckage. Sharks circle be
 
 | | What you get |
 | :--- | :--- |
-| **Your hands are the controls** | Two-palm tracking, calibration, tracking-loss recovery, and a keyboard/mouse fallback. |
-| **A sea that moves with you** | Rolling procedural water, a stormy sky, rain, searchlights, and cinematic transitions. |
-| **Voices in the storm** | 114 bundled synthetic voice lines, reactive radio chatter, captions, and sound settings. |
+| **Choose your controls** | Two-palm tracking with calibration and tracking-loss recovery, or keyboard and mouse. |
+| **A sea that moves with you** | Shared rendered waves and buoyancy, adjustable swell, a pitching boat, rain, searchlights, and a sinking wreck. |
+| **Eight rigged survivors** | Fitted safety-orange life jackets and procedural `wave`, `tread`, `dangle`, and `idle` animations. Waterborne survivors tread upright with their heads and shoulders above the surface. |
+| **Voices in the storm** | 114 Kokoro-82M lines, cockpit PA and radio chatter, and captions. Web Audio mixes the helicopter and speed-reactive boat engines with damage-scaled hull hits and breach splashes. |
 | **Every run leaves a record** | Callsigns, scores, saved/lost survivors, and a local run log backed by IndexedDB. |
 | **Camera processing stays local** | Self-hosted MediaPipe runtime and recognition model; webcam frames stay on the device. |
-| **Everything comes aboard** | GLB models, WAV voices, artwork, dialogue, and notices ship with a normal Git clone. |
+| **Ready at takeoff** | All 16 GLBs start loading and warming up behind the title. An early Start click queues the mission until the scene is ready. |
+
+### Cast
+
+| Survivor | Role | Model in `public/models/` |
+| :--- | :--- | :--- |
+| Mara Voss | First Officer | `mara-voss.glb` |
+| Priya Nair | ER Nurse | `priya-nair.glb` |
+| Ana Kapoor | Honeymooner | `ana-kapoor.glb` |
+| Elias Rook | Engineer | `elias-rook.glb` |
+| Tommy Ricci | Ship's Cook | `tommy-ricci.glb` |
+| Dev Kapoor | Honeymooner | `dev-kapoor.glb` |
+| Hollis Brandt | Retired Fisherman | `hollis-brandt.glb` |
+| Jay Okafor | Student Deckhand | `jay-okafor.glb` |
 
 <a id="controls"></a>
 
@@ -109,8 +123,10 @@ A passenger ship has broken apart. Survivors cling to wreckage. Sharks circle be
 | **Raise / lower winch** | Move your **left palm** up / down | Mouse vertically or <kbd>↑</kbd> / <kbd>↓</kbd> |
 | **Close / open claw** | Close / open your **left palm** | Hold / release <kbd>F</kbd> or left mouse button |
 | **Steer boat** | Tilt both palms like a steering wheel | <kbd>A</kbd> / <kbd>D</kbd> |
-| **Throttle up / down** | Raise / lower both palms | <kbd>W</kbd> / <kbd>S</kbd> |
+| **Boat throttle** | Raise / lower both palms | Hold <kbd>W</kbd> to accelerate, release to idle, or press <kbd>S</kbd> to slow faster. |
 | **Pause** | Hold both thumbs up | <kbd>Esc</kbd> |
+
+**Settings** includes a live **Wave Intensity** slider for the visible swell and boat motion. Under **Boat Throttle**, **Hold to Accelerate** is the keyboard default. Choose **Cruise Throttle (Sticky)** to set the throttle with <kbd>W</kbd> and <kbd>S</kbd> and keep that setting after release. **Survivor Count** sets the cast size for the next mission.
 
 Scores and settings belong to the current browser and origin. Keeping the same host and port keeps the same local scorebook.
 
@@ -128,11 +144,11 @@ shipwreck/
 │   ├── sim/            Rescue, boat, shared water simulation
 │   ├── input/          Hand tracking, calibration, keyboard, emulator
 │   ├── render/         Three.js scene, models, graphics backends
-│   ├── audio/          Radio, voices, synthesized sound
+│   ├── audio/          Web Audio, dialogue, engine and impact mix
 │   ├── ui/             Preact views and styles
 │   ├── persistence/    Local score storage
 │   └── core/           Shared math
-├── public/             Runtime assets + third-party notices
+├── public/             Runtime GLBs, audio, decoders, art, and notices
 ├── tests/              Unit, fairness, and browser integration tests
 ├── scripts/            Static server, asset tools, performance harness
 └── docs/               Design, plans, verification, and README media
@@ -216,7 +232,7 @@ Your production build is ready at **<http://127.0.0.1:4174>**. Deploy the conten
 | **Assets** | Deploy the full build, including `mediapipe/`, `models/`, audio, and notices |
 | **Server application** | None required |
 
-Runtime files use ordinary Git storage. A normal clone/install/build needs no Git LFS, asset regeneration, or external runtime CDN. Generated dependencies, build/test output, local secrets, and unused full-resolution art references are excluded from version control.
+Runtime files use ordinary Git storage and local URLs. A checkout with the licensed runtime assets builds without Git LFS or an external runtime CDN. Keep third-party model files within the distribution rights listed in [CREDITS.md](CREDITS.md). Generated dependencies, build/test output, raw assets, and local secrets stay outside version control.
 
 <a id="asset-tools"></a>
 
@@ -225,35 +241,20 @@ Runtime files use ordinary Git storage. A normal clone/install/build needs no Gi
 The checked-in assets are ready to use. Open these field notes when you want to change their sources.
 
 <details>
-<summary><strong>Regenerate helicopter and rescue-vessel models</strong></summary>
+<summary><strong>Maintain the runtime models</strong></summary>
 
-Edit [`src/render/models.ts`](src/render/models.ts). Install Playwright Chromium, then start the dev server on port 4173:
-
-```sh
-pnpm dev --port 4173 --strictPort
-```
-
-In another terminal:
-
-```sh
-node scripts/export-models.mjs
-```
-
-This writes the two GLB models under `public/models/`.
+The title screen starts the GLB loader in [`src/render/renderer.ts`](src/render/renderer.ts). It uses local Draco and Meshopt decoders. Tune scene sizes in `MODEL_SCALES` in [`src/render/models.ts`](src/render/models.ts). Finished models go in `public/models/`. Keep `rescue-vessel.glb` protected from the legacy procedural exporter.
 
 </details>
 
 <details>
-<summary><strong>Rewrite dialogue and regenerate synthetic voices</strong></summary>
+<summary><strong>Maintain dialogue and sound overrides</strong></summary>
 
 The authored bank is in [`scripts/dialogue.mjs`](scripts/dialogue.mjs); the runtime bank is [`public/dialogue/lines.en.json`](public/dialogue/lines.en.json).
 
-```sh
-node scripts/dialogue.mjs
-python3 scripts/gen-voice.py
-```
+The bundled Kokoro-82M `.ogg` clips use the dialogue IDs as filenames. See [CREDITS.md](CREDITS.md) for the voice presets. The legacy eSpeak generator in [`scripts/gen-voice.py`](scripts/gen-voice.py) produces the WAV fallbacks under `public/audio/voice/`.
 
-Run these in order. Regenerating the dialogue JSON removes generated audio paths; voice generation restores the paths and creates the WAVs. It needs **Python 3** and a local **eSpeak NG shared library with voice data**. These tools are optional for normal development and play.
+Sound overrides under `public/audio/` use the clip name and one of `.mp3`, `.wav`, or `.ogg`, in that order. The four supplied recordings are `helicopter-engine.wav`, `boat-engine.wav`, `boat-rock-hit.wav`, and `water-splash.wav`. Recorded and synthesized audio share the same phase and event triggers. Boat shark splashes use 30–35% of the gain of the rescue-phase platform slam so the engine and hull impacts stay audible. Rebuild after changing the set of available files for production.
 
 </details>
 
@@ -274,11 +275,12 @@ Keep MediaPipe pinned. [`vite.config.ts`](vite.config.ts) patches the SDK's metr
 | :--- | :--- |
 | [Original brief](docs/SHIPWRECK.md) | The story, design pillars, systems, and acceptance targets |
 | [Implementation plan](docs/PLAN.md) | The original milestone sequence |
-| [V2 development plan](docs/PLAN_V2.md) | The next graphics, physics, and asset milestones |
-| [Fidelity ledger](docs/FIDELITY_LEDGER.md) | What is implemented and what still needs evidence |
-| [Verification](docs/VERIFICATION.md) | Tested behavior, reproduction steps, and manual gates |
+| [V2 development plan](docs/PLAN_V2.md) | The graphics, physics, and asset roadmap |
+| [Fidelity ledger](docs/FIDELITY_LEDGER.md) | Earlier implementation and evidence checkpoints |
+| [Verification](docs/VERIFICATION.md) | Reproduction steps, historical test results, and manual gates |
 | [Reference rig](docs/REFERENCE_RIG.md) | The provisional hardware and performance baseline |
 | [Asset inventory](docs/ASSETS.md) | Asset sources, generation tools, and bundled notices |
+| [Credits](CREDITS.md) | Model, dialogue, and sound attribution and licenses |
 
 README illustrations are original project graphics. The animated preview and stills are captures of the game's built-in replay; they demonstrate gameplay rather than hardware performance. Keep [`public/notices/`](public/notices/) with distributed builds.
 

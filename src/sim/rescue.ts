@@ -1,26 +1,44 @@
 import { tuning } from '../app/tuning'
-import { approach, clamp, lerp, seededRandom } from '../core/math'
+import { approach, clamp, damp, lerp, seededRandom } from '../core/math'
 import type { ControlIntent } from '../input/intent'
 import type { Emit } from '../game/events'
 import { waveHeight } from './water'
 
 const R = tuning.rescue
 const S = tuning.shark
+const boardCapacity = 3
+export const rescueBoardX = -32
+export const rescuePlaneZ = 0
+export const boardBreachImpact = { apexAge: -1.13, x: rescueBoardX - 13.2, z: 10 } as const
+
+// The existing board-break tick marks splashdown; the visible breach peaks before it.
+export function boardBreachHeight(age: number) {
+  const arcTime = age - boardBreachImpact.apexAge
+  const ease = (from: number, to: number) => {
+    const progress = clamp((arcTime - from) / (to - from))
+    return progress * progress * (3 - 2 * progress)
+  }
+  return -1.5 - 6.1 * ease(-2.2, -1.25) + 14.5 * ease(-1.25, 0) - 14.9 * ease(0, 2.25)
+}
 
 export const roster = [
-  { id: 'mara', name: 'Mara Voss', x: -35.4, z: 0, raft: true, skin: '#c59374' },
-  { id: 'elias', name: 'Elias Rook', x: -34, z: -0.6, raft: true, skin: '#d3ae94' },
-  { id: 'dev', name: 'Dev Kapoor', x: -30.8, z: 0.4, raft: true, skin: '#ac7b5b' },
-  { id: 'ana', name: 'Ana Kapoor', x: -29.5, z: -0.35, raft: true, skin: '#be8d69' },
-  { id: 'priya', name: 'Priya Nair', x: -28.2, z: 0.15, raft: true, skin: '#956848' },
-  { id: 'jay', name: 'Jay Okafor', x: -58, z: 0, raft: false, skin: '#79563e' },
-  { id: 'tommy', name: 'Tommy Ricci', x: -41, z: 0, raft: false, skin: '#dbad91' },
-  { id: 'hollis', name: 'Hollis Brandt', x: -8, z: 0, raft: false, skin: '#bc9172' },
+  { id: 'mara', name: 'Mara Voss', x: -35.4, model: 'mara-voss.glb' },
+  { id: 'elias', name: 'Elias Rook', x: -34, model: 'elias-rook.glb' },
+  { id: 'dev', name: 'Dev Kapoor', x: -30.8, model: 'dev-kapoor.glb' },
+  { id: 'ana', name: 'Ana Kapoor', x: -39.8, model: 'ana-kapoor.glb' },
+  { id: 'priya', name: 'Priya Nair', x: -24.1, model: 'priya-nair.glb' },
+  { id: 'jay', name: 'Jay Okafor', x: -41.2, model: 'jay-okafor.glb' },
+  { id: 'tommy', name: 'Tommy Ricci', x: -22.7, model: 'tommy-ricci.glb' },
+  { id: 'hollis', name: 'Hollis Brandt', x: -21.25, model: 'hollis-brandt.glb' },
 ] as const
+export const maxSurvivors = roster.length
+export const normalizeSurvivorCount = (value: unknown) =>
+  typeof value === 'number' && Number.isFinite(value) ? clamp(Math.round(value), 1, maxSurvivors) : maxSurvivors
 
 export type SurvivorState = 'debris' | 'floating' | 'carried' | 'falling' | 'saved' | 'lost'
 export interface Survivor {
-  id: string; name: string; x: number; z: number; skin: string
+  id: string; name: string; x: number; readonly z: typeof rescuePlaneZ
+  waterAnchorX: number
   state: SurvivorState; targeted: boolean; lastTarget: number; fallY: number; fallSpeed: number
 }
 interface Attack { target: Survivor; start: number; strike: number; end: number; delayed: boolean; announced: boolean }
@@ -32,10 +50,11 @@ export class Rescue {
   threat = 0
   x = -12
   velocity = 0
-  bank = 0
+  acceleration = 0
   cable = 8.28
   swing = 0
   private swingVelocity = 0
+  private readonly swimmerSlope = { x: 0, z: 0 }
   grip = false
   gripProgress = 0
   private gripTimer = 0
@@ -56,31 +75,37 @@ export class Rescue {
   done: 'aboard' | 'all-lost' | null = null
   readonly random: () => number
 
-  constructor(seed: number, private readonly emit: Emit, readonly practice = false) {
+  constructor(seed: number, private readonly emit: Emit, readonly practice = false, count: number = maxSurvivors) {
     this.random = seededRandom(seed)
     this.survivors = practice
-      ? [{ id: 'buoy', name: 'Training buoy', skin: '#f2914f', x: 0, z: 0, state: 'floating', targeted: false,
+      ? [{ id: 'buoy', name: 'Training buoy', x: 0, z: rescuePlaneZ, waterAnchorX: 0, state: 'floating', targeted: false,
           lastTarget: -Infinity, fallY: 0, fallSpeed: 0 }]
-      : roster.map(entry => ({ ...entry, state: entry.raft ? 'debris' : 'floating',
+      : roster.slice(0, normalizeSurvivorCount(count)).map((entry, i) => ({
+          ...entry, z: rescuePlaneZ, waterAnchorX: entry.x, state: i < boardCapacity ? 'debris' : 'floating',
           targeted: false, lastTarget: -Infinity, fallY: 0, fallSpeed: 0 }))
   }
 
   get altitude() { return R.altitude + 0.18 * Math.sin(this.time * 1.6) }
   get clawX() { return this.x + this.cable * Math.sin(this.swing) }
   get clawY() { return this.altitude - this.cable * Math.cos(this.swing) }
-  get deckY() { return R.deckY + waveHeight(R.deploy, 0, this.time) }
+  get deckY() { return R.deckY + waveHeight(R.deploy, rescuePlaneZ, this.time) }
   get saved() { return this.survivors.filter(s => s.state === 'saved').length }
   get lost() { return this.survivors.filter(s => s.state === 'lost').length }
   get carried() { return this.survivors.filter(s => s.state === 'carried') }
   get overDeck() { return Math.abs(this.clawX - R.deploy) <= R.deckWidth / 2 }
   get jammed() { return this.time < this.jamUntil }
 
-  survivorY(s: Survivor) {
+  winchTargetAt(height: number) {
+    const length = (this.altitude - height) / Math.cos(this.swing)
+    return clamp((length - R.cableMin) / (R.cableMax - R.cableMin))
+  }
+
+  survivorY(s: Survivor, waveTime = this.time) {
     if (s.state === 'falling') return s.fallY
     if (s.state === 'saved') return this.deckY + 1.1
     return s.state === 'debris'
-      ? waveHeight(-32, 0, this.time) + 1.45
-      : waveHeight(s.x, s.z, this.time) + 0.75
+      ? waveHeight(rescueBoardX, rescuePlaneZ, waveTime) + 1.45
+      : waveHeight(s.x, s.z, waveTime) + 0.75
   }
 
   grabbable(horizontal = R.grabX, vertical = R.grabY) {
@@ -92,6 +117,7 @@ export class Rescue {
 
   tick(dt: number, intent: ControlIntent, assist: RescueAssists, timeScale = 1) {
     if (this.done) return
+    const previousTime = this.time
     this.time += dt
     const step = dt * timeScale
     let target = intent.heliTargetX * R.span
@@ -99,10 +125,12 @@ export class Rescue {
       const near = this.survivors.find(s => (s.state === 'debris' || s.state === 'floating') && Math.abs(target - s.x) < 2.3)
       if (near) target = lerp(target, near.x, 0.33)
     }
-    const acceleration = R.spring ** 2 * (target - this.x) - 2 * R.damping * R.spring * this.velocity
+    const previousVelocity = this.velocity
+    const acceleration = R.spring ** 2 * (target - this.x)
+      - (2 * R.damping * R.spring + 0.18) * this.velocity
     this.velocity = clamp(this.velocity + acceleration * step, -R.speed, R.speed)
     this.x = clamp(this.x + this.velocity * step, -R.span, R.span)
-    this.bank = approach(this.bank, clamp(-acceleration * 0.028, -0.244, 0.244), step * 1.2)
+    this.acceleration = damp(this.acceleration, clamp((this.velocity - previousVelocity) / step, -20, 20), 4.8, step)
     const targetCable = lerp(R.cableMin, R.cableMax, intent.winchTarget)
     const previousCable = this.cable
     this.cable = approach(this.cable, targetCable, step * (targetCable > this.cable ? R.extend : R.retract))
@@ -110,6 +138,15 @@ export class Rescue {
     this.swingVelocity += (-this.swing * (9.81 / this.cable + 3) - this.swingVelocity * damping
       + clamp(-acceleration, -15, 15) * 0.012) * step
     this.swing = clamp(this.swing + this.swingVelocity * step, -0.13, 0.13)
+
+    if (!this.practice) {
+      for (const s of this.survivors) {
+        if (s.state !== 'floating') continue
+        waveHeight(s.waterAnchorX, s.z, this.time, this.swimmerSlope)
+        const sway = clamp(-0.58 * this.swimmerSlope.x, -0.28, 0.28)
+        s.x = clamp(s.waterAnchorX + sway, -R.span, R.span)
+      }
+    }
 
     if (intent.trackingState === 'ok' && !this.jammed) {
       const desired = assist.winchOnly
@@ -124,12 +161,20 @@ export class Rescue {
       if (s.state === 'falling') {
         s.fallSpeed += 9.81 * step
         s.fallY -= s.fallSpeed * step
-        if (s.fallY <= waveHeight(s.x, s.z, this.time) + 0.75) s.state = 'floating'
+        if (s.fallY <= waveHeight(s.x, s.z, this.time) + 0.75) {
+          s.state = 'floating'
+          this.emit('WATER_SPLASH', { x: s.x })
+        }
       }
     }
 
     if (!this.practice) {
       if (intent.trackingState === 'ok') this.updateThreat()
+      const previousAge = previousTime - this.breachedAt
+      const breachAge = this.time - this.breachedAt
+      if (previousAge < 0 && breachAge >= 0) {
+        this.emit('WATER_SPLASH', { x: boardBreachImpact.x, heavySplash: true })
+      }
       if (this.time >= this.danglingAt) {
         const hanging = this.carried[0]
         if (hanging) this.emit('DANGLING', { id: hanging.id })
@@ -190,8 +235,7 @@ export class Rescue {
         s.targeted = false
       } else {
         s.state = 'falling'
-        s.x = this.clawX
-        s.z = 0
+        s.x = s.waterAnchorX = clamp(this.clawX, -R.span, R.span)
         s.fallY = this.clawY
         s.fallSpeed = 0
         this.emit('WATER_DROP', { id: s.id, x: s.x, text: 'WATER DROP · RECOVER SURVIVOR' })
@@ -220,12 +264,12 @@ export class Rescue {
     }
     if (active.length && this.warningTime === Infinity && (this.time >= S.breachAt || this.saved >= S.breachCount)) {
       this.warningTime = this.time
-      this.emit('MEGALODON_WARNING', { x: -32, text: 'LARGE CONTACT · BRACE' })
+      this.emit('MEGALODON_WARNING', { x: rescueBoardX, text: 'LARGE CONTACT · BRACE' })
     }
     if (!breached && this.time >= this.warningTime + S.warning) {
       this.breachedAt = this.time
       for (const s of this.survivors) if (s.state === 'debris') s.state = 'floating'
-      this.emit('MEGALODON_BREACH', { x: -32, text: 'MEGALODON BREACH' })
+      this.emit('MEGALODON_BREACH', { x: rescueBoardX, text: 'MEGALODON BREACH' })
     }
     for (let index = this.attacks.length - 1; index >= 0; index--) {
       const attack = this.attacks[index]
@@ -251,7 +295,7 @@ export class Rescue {
     const reachable = candidates.filter(s => Math.abs(this.x - s.x) < 31)
     const eligible = !idle && reachable.length ? reachable : candidates
     if (!eligible.length) return
-    const weights = eligible.map(s => (s.state === 'floating' ? 5 : Math.abs(s.x + 32) > 2 ? 2 : 0.65)
+    const weights = eligible.map(s => (s.state === 'floating' ? 5 : Math.abs(s.x - rescueBoardX) > 2 ? 2 : 0.65)
       * (0.7 + 0.3 / (1 + Math.abs(s.x + 30) / 20)))
     let choice = this.random() * weights.reduce((total, weight) => total + weight, 0)
     const choiceIndex = weights.findIndex(weight => (choice -= weight) <= 0)
@@ -269,8 +313,8 @@ export class Rescue {
 
   private resolveAttack(s: Survivor) {
     s.targeted = false
-    const lowCarry = s.state === 'carried' && this.clawY - waveHeight(this.clawX, 0, this.time) < 1.5
-    const edge = s.state === 'debris' && Math.abs(s.x + 32) > 2
+    const lowCarry = s.state === 'carried' && this.clawY - waveHeight(this.clawX, rescuePlaneZ, this.time) < 1.5
+    const edge = s.state === 'debris' && Math.abs(s.x - rescueBoardX) > 2
     if (edge && this.random() < 0.5) {
       s.state = 'floating'
     } else if (s.state === 'floating' || lowCarry || edge) {

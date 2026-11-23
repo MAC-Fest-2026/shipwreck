@@ -1,12 +1,13 @@
 import { tuning } from '../app/tuning'
 import { neutralIntent, type ControlIntent } from '../input/intent'
+import type { BoatThrottle } from '../input/keyboard'
 import { Boat } from '../sim/boat'
-import { Rescue } from '../sim/rescue'
+import { maxSurvivors, normalizeSurvivorCount, Rescue } from '../sim/rescue'
 import type { Emit, GameEvent } from './events'
 import { rankFor, scoreRun, type InputMode, type Outcome, type RunRecord } from './score'
 
 export type ScenePhase = 'school' | 'intro' | 'arrival' | 'rescue' | 'handoff' | 'boat' | 'outro' | 'results'
-export type SessionOptions = { aim: boolean; steering: boolean; stabilization: number; winchOnly: boolean }
+export type SessionOptions = { aim: boolean; steering: boolean; stabilization: number; winchOnly: boolean; boatThrottle?: BoatThrottle }
 export const timelines = {
   intro: { duration: 18, next: 'arrival' },
   arrival: { duration: 8, next: 'rescue' },
@@ -33,6 +34,7 @@ export class Session {
   desired = neutralIntent
   private cuePlayed = false
   private slowUntil = -Infinity
+  private readonly survivorCount: number
 
   constructor(
     readonly seed: number,
@@ -41,10 +43,12 @@ export class Session {
     options: SessionOptions,
     school: boolean,
     private readonly eventListener: (e: GameEvent) => void,
+    survivorCount: number = maxSurvivors,
   ) {
     this.assist = { ...options }
+    this.survivorCount = normalizeSurvivorCount(survivorCount)
     this.phase = school ? 'school' : 'intro'
-    this.rescue = new Rescue(seed, school ? () => {} : this.emit, school)
+    this.rescue = new Rescue(seed, school ? () => {} : this.emit, school, this.survivorCount)
     this.boat = new Boat(seed, this.emit)
   }
 
@@ -84,7 +88,8 @@ export class Session {
         this.finish('failed_all_lost')
       }
     } else if (this.phase === 'boat') {
-      this.boat.tick(dt, input.trackingState === 'degraded' ? { ...input, steer: 0, throttle: 0.4 } : input, this.assist.steering)
+      this.boat.tick(dt, input.trackingState === 'degraded' ? { ...input, steer: 0, throttle: 0.4 } : input,
+        this.assist.steering, this.inputMode === 'keyboardMouse' && this.assist.boatThrottle === 'hold')
       if (this.boat.done === 'landed') this.enter('outro')
       if (this.boat.done === 'destroyed') this.finish('failed_boat_destroyed')
     }
@@ -92,7 +97,7 @@ export class Session {
 
   skip() {
     if (this.phase === 'school') {
-      this.rescue = new Rescue(this.seed, this.emit)
+      this.rescue = new Rescue(this.seed, this.emit, false, this.survivorCount)
       this.enter('intro')
     } else if (isCinematic(this.phase)) {
       const next = timelines[this.phase].next
@@ -126,7 +131,8 @@ export class Session {
       runId: this.id, player: { id: this.callsign.toLowerCase(), callsign: this.callsign },
       startedAt: this.startedAt, outcome, score, rank: rankFor(score),
       time: { rescueMs, boatMs, totalActiveMs: rescueMs + boatMs },
-      survivors: { total: 8, saved: rescue.practice ? 0 : rescue.saved, lost: rescue.practice ? 0 : rescue.lost,
+      survivors: { total: rescue.practice ? this.survivorCount : rescue.survivors.length,
+        saved: rescue.practice ? 0 : rescue.saved, lost: rescue.practice ? 0 : rescue.lost,
         perSurvivor: rescue.practice ? {} : Object.fromEntries(rescue.survivors.map(s => [s.id, s.state])) },
       stats: { grabAttempts: rescue.grabAttempts, grabSuccesses: rescue.grabSuccesses, quickSaves: rescue.quickSaves,
         hardDrops: rescue.hardDrops, hullRemaining: boat.hull, collisions: boat.collisions },

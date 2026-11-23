@@ -152,6 +152,7 @@ p { color: var(--muted); }
 .settings-block { background: #0b1a22b0; border: 1px solid var(--edge); padding: 18px; }
 .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 11px; font-size: 1.17rem; }
 .setting-row .secondary { min-height: 36px; padding: 4px 13px; }
+.wave-slider { display: block; width: 100%; margin: 10px 0 16px; accent-color: var(--amber); cursor: pointer; }
 .stepper { display: flex; align-items: center; gap: 8px; }
 .stepper strong { min-width: 36px; text-align: center; }
 .switches { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 13px; }

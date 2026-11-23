@@ -13,3 +13,4 @@ const app = document.querySelector<HTMLElement>('#app')!
 const controller = new Controller(c => render(<View c={c} />, app))
 controller.setupDebug()
 render(<View c={controller} />, app)
+void controller.preloadAssets()

@@ -13,6 +13,7 @@ import type { GameEvent } from '../game/events'
 import type { InputMode, RunRecord } from '../game/score'
 import { ScoreRepository } from '../persistence/scores'
 import type { GameRenderer } from '../render/renderer'
+import { setWaveIntensity } from '../sim/water'
 
 export type Screen = 'title' | 'camera' | 'calibration' | 'callsign' | 'briefing' | 'game' | 'leaderboard' | 'settings'
 type CameraState = 'off' | 'loading' | 'live' | 'error'
@@ -40,6 +41,7 @@ export class Controller {
   cameraNote = ''
   leaderBack: Screen = 'title'
   status = ''
+  loadingStart: 'school' | 'mission' | null = null
   calibrating = new Calibrator()
   calibration = loadCalibration()
   settingsReturn: Screen = 'title'
@@ -47,7 +49,7 @@ export class Controller {
   readonly hands = new HandsIntentProvider(this.calibration ?? defaults)
   readonly fallback = new KeyboardMouseIntentProvider()
   readonly emulator = new HandEmulator()
-  readonly radio = new Radio()
+  readonly radio = new Radio(this.settings)
   readonly scores = new ScoreRepository()
   readonly kiosk = query.has('kiosk')
   readonly debug = import.meta.env.DEV && query.has('debug') && !this.kiosk
@@ -68,6 +70,8 @@ export class Controller {
   now = performance.now()
   private cameraRequest: AbortController | null = null
   private renderer: GameRenderer | null = null
+  private assetLoad: Promise<boolean> | null = null
+  private assetsReady = false
   private rendering = false
   private frame = 0
   private previous = 0
@@ -94,6 +98,7 @@ export class Controller {
   private savingRun: string | null = null
 
   constructor(private readonly renderView: (control: Controller) => void) {
+    setWaveIntensity(this.settings.waveIntensity)
     this.stage = document.querySelector('#stage')!
     this.stage.hidden = true
     this.video = document.querySelector('#camera-feed')!
@@ -128,7 +133,9 @@ export class Controller {
     const dt = clamp((ms - (this.previous || ms)) / 1000, 0, 0.2)
     this.previous = ms
     if (this.emulator.enabled && this.mode === 'hands') this.hands.ingest(this.emulator.sample(), ms)
-    const input = this.mode === 'hands' ? this.hands.poll(ms) : this.fallback.poll(ms)
+    const throttleMode = this.game?.phase === 'boat' ? this.settings.boatThrottle : undefined
+    const input = this.mode === 'hands' ? this.hands.poll(ms)
+      : this.fallback.poll(ms, throttleMode, this.screen === 'game' && !this.overlay)
     this.handleTracking(input, dt)
     this.handleGestures(input)
     this.positionCamera()
@@ -157,7 +164,7 @@ export class Controller {
       if (session?.record && this.screen === 'game' && ms - this.arrivedAt > 20000) this.openLeaderboard()
       if (ms - this.lastAction > 60000) this.quit()
     }
-    if (this.screen === 'game' && session) {
+    if (session && (this.screen === 'game' || this.previewingSettings && this.dirty)) {
       if (this.overlay === 'graphics' || session.phase === 'results' && this.frame % 3 !== 0) {
         // The title art remains available while a graphics context recovers.
       } else if (this.renderer && (session.phase !== 'results' || this.frame % 3 === 0)) {
@@ -165,8 +172,14 @@ export class Controller {
         Object.assign(this.vm, this.renderer.stats)
       }
     }
-    this.radio.update(ms, this.screen === 'game' && !this.overlay, session?.phase === 'boat',
-      session?.rescue.threat ?? 0, session?.phase === 'boat' ? session.boat.speed / 16 : Math.abs(session?.rescue.velocity ?? 0) / 14)
+    this.radio.update(ms, {
+      active: this.screen === 'game' && !this.overlay,
+      phase: session?.phase,
+      pressure: session?.rescue.threat ?? 0,
+      flightSpeed: clamp(Math.abs(session?.rescue.velocity ?? 0) / tuning.rescue.speed),
+      boatSpeed: clamp((session?.boat.speed ?? 0) / tuning.boat.speed),
+      throttle: clamp(session?.desired.throttle ?? 0),
+    })
     if (this.toast && ms > this.toast.end) this.toast = null
     if (this.dirty || ms - this.uiAt > 64 && (this.screen === 'game' || this.mode === 'hands' || this.camera === 'loading')) {
       this.dirty = false
@@ -179,7 +192,7 @@ export class Controller {
   go(screen: Screen) {
     this.screen = screen
     this.enteredAt = this.lastAction = this.now
-    this.stage.hidden = screen !== 'game'
+    this.stage.hidden = screen !== 'game' && !this.previewingSettings
     this.setTarget(null)
     this.dirty = true
     this.fallback.active = this.mode === 'keyboardMouse' && screen === 'game'
@@ -281,42 +294,54 @@ export class Controller {
     this.dirty = true
   }
 
+  preloadAssets() {
+    this.assetLoad ??= import('../render/renderer').then(async ({ GameRenderer }) => {
+      this.renderer = new GameRenderer(this.stage, lost => {
+        if (lost && this.screen === 'game') {
+          this.overlay = 'graphics'
+          if (this.game) this.game.paused = true
+        } else if (!lost && this.screen === 'game') this.pause()
+        this.dirty = true
+      })
+      await this.renderer.ready
+      const preview = new Session(tuning.seed, '', 'replay', this.settings, false, () => {})
+      await this.renderer.warmup(preview, this.settings)
+      this.assetsReady = true
+      return true
+    }).catch(() => false)
+    return this.assetLoad
+  }
+
   async launch(school: boolean, mode = this.mode, fast = false) {
     if (this.rendering || this.renderer?.lost) return
     this.radio.unlock()
     this.rendering = true
-    this.status = 'Loading rescue scene…'
+    this.loadingStart = this.assetsReady ? null : school ? 'school' : 'mission'
+    this.status = ''
     this.dirty = true
+    const origin = this.screen
     try {
-      if (!this.renderer) {
-        const { GameRenderer } = await import('../render/renderer')
-        try {
-          this.renderer = new GameRenderer(this.stage, lost => {
-            if (lost) {
-              this.overlay = 'graphics'
-              if (this.game) this.game.paused = true
-            } else if (this.screen === 'game') this.pause()
-            this.dirty = true
-          })
-        } catch (error) {
-          if (!fast) throw error
-        }
-      }
+      const ready = await this.preloadAssets()
+      if (this.screen !== origin) return
+      if (!ready && !fast) throw new Error('Renderer unavailable')
       this.radio.reset()
       this.overlay = null
       this.saving = 'idle'
       this.recent = null
       this.toast = null
       this.mode = mode
-      this.game = new Session(tuning.seed, this.callsign, mode, this.settings, school, event => this.event(event))
+      this.game = new Session(tuning.seed, this.callsign, mode, this.settings, school,
+        event => this.event(event), this.settings.survivorCount)
       this.replayFast = fast
       this.replay = mode === 'replay' ? new ReplayIntentProvider(() => pilotBot(this.game!)) : null
       this.status = ''
+      if (ready && !fast) this.renderer?.draw(this.game, 0, this.settings, this.now / 1000)
       this.go('game')
     } catch {
       this.status = 'WebGL2 could not start. Open in Chromium with hardware acceleration enabled.'
     } finally {
       this.rendering = false
+      this.loadingStart = null
       this.dirty = true
     }
   }
@@ -326,7 +351,7 @@ export class Controller {
     if (!session) return
     const boat = ['boat', 'outro', 'handoff'].includes(session.phase)
     const eligible = new Set(session.rescue.survivors.filter(s => boat ? s.state === 'saved' : s.state !== 'lost').map(s => s.id))
-    this.radio.event(event, eligible)
+    this.radio.event(event, eligible, this.now, boat ? session.boat.x : 0)
     if (event.text) {
       const warning = event.type.includes('WARNING') || event.type === 'SHARK_TELEGRAPH'
       this.toast = { text: event.text, points: event.points, end: this.now + (warning ? 3900 : 2500), type: event.type }
@@ -376,10 +401,17 @@ export class Controller {
     this.go('settings')
   }
 
+  private get previewingSettings() {
+    return this.screen === 'settings' && this.settingsReturn === 'game' && !!this.game
+  }
+
   changeSetting<K extends keyof Settings>(key: K, value: Settings[K]) {
     this.settings = { ...this.settings, [key]: value }
-    this.radio.configure(this.settings)
-    if (this.game) this.game.assist = { ...this.game.assist, [key]: value }
+    if (key === 'waveIntensity') this.settings.waveIntensity = setWaveIntensity(this.settings.waveIntensity)
+    else {
+      this.radio.configure(this.settings)
+      if (this.game && key !== 'survivorCount') this.game.assist = { ...this.game.assist, [key]: value }
+    }
     put('shipwreck-settings-v1', this.settings)
     this.dirty = true
   }
