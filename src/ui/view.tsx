@@ -238,6 +238,10 @@ function UserSettings({ c }: { c: Controller }) {
           <Button variant="letter-button" label="Raise wave intensity" disabled={c.settings.waveIntensity >= waveIntensity.max}
             action={() => adjustWaves(1)}>+</Button>
         </div></div>
+        <input type="range" aria-label="Wave Intensity" aria-valuetext={wavePercent + '%'}
+          class="wave-slider" min={waveIntensity.min * 100} max={waveIntensity.max * 100}
+          step={waveStep} value={wavePercent}
+          onInput={event => c.changeSetting('waveIntensity', event.currentTarget.valueAsNumber / 100)} />
         <div class="switches">
         {switches.map(([key, label]) => <Button key={key} variant={c.settings[key] ? 'switch on' : 'switch'}
           action={() => c.changeSetting(key, !c.settings[key])}>{label}<span>{c.settings[key] ? 'On' : 'Off'}</span></Button>)}

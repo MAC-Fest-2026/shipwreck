@@ -394,12 +394,12 @@ function breachHeight(shark: BoatSharkKind, age: number) {
 }
 
 // The bite path gives the snout. The GLB pivots nearer the dorsal fin and faces +Z.
-export function boatSharkPose(lunge: BoatLunge, time: number) {
+export function boatSharkPose(lunge: BoatLunge, time: number, visualLength = sharkLunge[lunge.shark].length) {
   const age = time - lunge.time
   const snout = boatLungePosition(lunge, age)
   const speed = Math.hypot(snout.vx, snout.vz)
   const forwardX = snout.vx / speed, forwardZ = -snout.vz / speed
-  const offset = sharkLunge[lunge.shark].length * 0.44
+  const offset = visualLength * 0.44
   const centerX = snout.x - forwardX * offset, centerZ = -snout.z - forwardZ * offset
   const dt = 0.01
   const heightAt = (delta: number) => waveHeight(centerX + snout.vx * delta, centerZ - snout.vz * delta, time + delta)

@@ -9,25 +9,27 @@ const S = tuning.shark
 const boardCapacity = 3
 export const rescueBoardX = -32
 export const rescuePlaneZ = 0
+export const boardBreachImpact = { apexAge: -1.13, x: rescueBoardX - 13.2, z: 10 } as const
 
-// An age of zero is the top of the visible board-break breach.
+// The existing board-break tick marks splashdown; the visible breach peaks before it.
 export function boardBreachHeight(age: number) {
+  const arcTime = age - boardBreachImpact.apexAge
   const ease = (from: number, to: number) => {
-    const progress = clamp((age - from) / (to - from))
+    const progress = clamp((arcTime - from) / (to - from))
     return progress * progress * (3 - 2 * progress)
   }
   return -1.5 - 6.1 * ease(-2.2, -1.25) + 14.5 * ease(-1.25, 0) - 14.9 * ease(0, 2.25)
 }
 
 export const roster = [
-  { id: 'mara', name: 'Mara Voss', x: -35.4, skin: '#c59374' },
-  { id: 'elias', name: 'Elias Rook', x: -34, skin: '#d3ae94' },
-  { id: 'dev', name: 'Dev Kapoor', x: -30.8, skin: '#ac7b5b' },
-  { id: 'ana', name: 'Ana Kapoor', x: -39.8, skin: '#be8d69' },
-  { id: 'priya', name: 'Priya Nair', x: -24.1, skin: '#956848' },
-  { id: 'jay', name: 'Jay Okafor', x: -41.2, skin: '#79563e' },
-  { id: 'tommy', name: 'Tommy Ricci', x: -22.7, skin: '#dbad91' },
-  { id: 'hollis', name: 'Hollis Brandt', x: -21.25, skin: '#bc9172' },
+  { id: 'mara', name: 'Mara Voss', x: -35.4, model: 'mara-voss.glb' },
+  { id: 'elias', name: 'Elias Rook', x: -34, model: 'elias-rook.glb' },
+  { id: 'dev', name: 'Dev Kapoor', x: -30.8, model: 'dev-kapoor.glb' },
+  { id: 'ana', name: 'Ana Kapoor', x: -39.8, model: 'ana-kapoor.glb' },
+  { id: 'priya', name: 'Priya Nair', x: -24.1, model: 'priya-nair.glb' },
+  { id: 'jay', name: 'Jay Okafor', x: -41.2, model: 'jay-okafor.glb' },
+  { id: 'tommy', name: 'Tommy Ricci', x: -22.7, model: 'tommy-ricci.glb' },
+  { id: 'hollis', name: 'Hollis Brandt', x: -21.25, model: 'hollis-brandt.glb' },
 ] as const
 export const maxSurvivors = roster.length
 export const normalizeSurvivorCount = (value: unknown) =>
@@ -35,7 +37,7 @@ export const normalizeSurvivorCount = (value: unknown) =>
 
 export type SurvivorState = 'debris' | 'floating' | 'carried' | 'falling' | 'saved' | 'lost'
 export interface Survivor {
-  id: string; name: string; x: number; readonly z: typeof rescuePlaneZ; skin: string
+  id: string; name: string; x: number; readonly z: typeof rescuePlaneZ
   waterAnchorX: number
   state: SurvivorState; targeted: boolean; lastTarget: number; fallY: number; fallSpeed: number
 }
@@ -76,7 +78,7 @@ export class Rescue {
   constructor(seed: number, private readonly emit: Emit, readonly practice = false, count: number = maxSurvivors) {
     this.random = seededRandom(seed)
     this.survivors = practice
-      ? [{ id: 'buoy', name: 'Training buoy', skin: '#f2914f', x: 0, z: rescuePlaneZ, waterAnchorX: 0, state: 'floating', targeted: false,
+      ? [{ id: 'buoy', name: 'Training buoy', x: 0, z: rescuePlaneZ, waterAnchorX: 0, state: 'floating', targeted: false,
           lastTarget: -Infinity, fallY: 0, fallSpeed: 0 }]
       : roster.slice(0, normalizeSurvivorCount(count)).map((entry, i) => ({
           ...entry, z: rescuePlaneZ, waterAnchorX: entry.x, state: i < boardCapacity ? 'debris' : 'floating',
@@ -168,8 +170,8 @@ export class Rescue {
       if (intent.trackingState === 'ok') this.updateThreat()
       const previousAge = previousTime - this.breachedAt
       const breachAge = this.time - this.breachedAt
-      if (previousAge >= 0 && previousAge < 2.25 && boardBreachHeight(previousAge) > 0 && boardBreachHeight(breachAge) <= 0) {
-        this.emit('WATER_SPLASH', { x: rescueBoardX, heavySplash: true })
+      if (previousAge < 0 && breachAge >= 0) {
+        this.emit('WATER_SPLASH', { x: boardBreachImpact.x, heavySplash: true })
       }
       if (this.time >= this.danglingAt) {
         const hanging = this.carried[0]

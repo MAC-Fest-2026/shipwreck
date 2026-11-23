@@ -6,12 +6,12 @@ import { tuning } from '../app/tuning'
 import { clamp, damp, lerp, seededRandom } from '../core/math'
 import { timelines, type Session } from '../game/session'
 import { boatBuoyancyCenter, boatLungeTiming, boatSharkPose, harbor, type BoatLunge, type FloatingHazard } from '../sim/boat'
-import { boardBreachHeight, rescueBoardX, rescuePlaneZ, roster } from '../sim/rescue'
-import { waterGlsl, waveHeight, waveUniforms } from '../sim/water'
+import { boardBreachHeight, boardBreachImpact, rescueBoardX, rescuePlaneZ, roster } from '../sim/rescue'
+import { impactSwell, waterGlsl, waveHeight, waveUniforms } from '../sim/water'
 import { beam, boatSplash, boatSplashDuration, environment, lanternGlow, placeBeam, wreckAtmosphere, wreckDebris } from './environment'
 import { claw, cockpit, dock, fitModelScale, hazard, HelicopterModel, instanceRocks, islandPlantings, islandSurface,
-  light, lighthouseFoundation, lighthouseSite, MODEL_SCALES, mooringLights, person, prepareCruiseWreck, prepareIsland, prepareLighthouse,
-  prepareRockSet, raft, rescueVessel, SharkModel, wreck, type ScaledModel } from './models'
+  light, lighthouseFoundation, lighthouseSite, MODEL_SCALES, mooringLights, prepareCruiseWreck, prepareIsland, prepareLighthouse,
+  prepareRockSet, raft, rescueDeckTrim, rescueVessel, SharkModel, SurvivorModel, wreck, type ScaledModel } from './models'
 
 export type Quality = 'low' | 'medium' | 'high'
 export interface RenderSettings { quality: Quality; reduceMotion: boolean; flashes: boolean }
@@ -42,6 +42,49 @@ function ring(radius: number, color: string) {
   return meshRing
 }
 
+function swimmerRipples(time: { value: number }) {
+  const geometry = new T.PlaneGeometry(3.2, 3.2, 8, 8).rotateX(-Math.PI / 2)
+  const material = new T.ShaderMaterial({
+    uniforms: { time, ...waveUniforms },
+    transparent: true, depthWrite: false,
+    vertexShader: `
+      uniform float time;
+      varying vec2 fromSwimmer;
+      varying float phase;
+      ${waterGlsl}
+      void main() {
+        vec4 world = modelMatrix * instanceMatrix * vec4(position, 1.);
+        fromSwimmer = position.xz;
+        phase = instanceMatrix[3].y;
+        world.y = oceanSample(world.xz, time).x + .06;
+        gl_Position = projectionMatrix * viewMatrix * world;
+      }`,
+    fragmentShader: `
+      uniform float time;
+      varying vec2 fromSwimmer;
+      varying float phase;
+      float ripple(float age, float distanceFromCenter) {
+        return (1. - smoothstep(.045, .21, abs(distanceFromCenter - mix(.25, 1.42, age))))
+          * smoothstep(0., .11, age) * (1. - age);
+      }
+      void main() {
+        float d = length(fromSwimmer);
+        vec2 direction = fromSwimmer / max(d, .02);
+        float chop = .61 + .39 * sin(18. * direction.x + 9. * direction.y + time * 5. + phase);
+        float age = time * 1.48 + phase;
+        float rings = max(ripple(fract(age), d), ripple(fract(age + .5), d));
+        float froth = (1. - smoothstep(.08, .51, d)) * (.46 + .27 * sin(time * 15. + phase * 7.));
+        gl_FragColor = vec4(.73, .86, .90, max(rings * chop, froth) * .82);
+        #include <colorspace_fragment>
+      }`,
+  })
+  const ripples = new T.InstancedMesh(geometry, material, roster.length)
+  ripples.count = 0
+  ripples.frustumCulled = false
+  ripples.instanceMatrix.setUsage(T.DynamicDrawUsage)
+  return ripples
+}
+
 // The outline follows the near-side plating in the scaled ship's local XY plane.
 const wreckTear = [
   [-14.2, 8.9], [-12.2, 12], [-9.6, 11.8], [-9.5, 14.4], [-6.6, 13.5], [-3, 15.65],
@@ -50,6 +93,7 @@ const wreckTear = [
   [-4.5, 4.9], [-7.7, 4.45], [-7.4, 6], [-11, 6.65], [-12.5, 8.2],
 ].map(([x, y]) => new T.Vector2(x, y))
 const tearDepth = 4.85
+const sternTear = { x: -50, y: 1.1, scale: 0.65 }
 
 function tearMask(bounds: T.Box2) {
   const resolution = 128
@@ -80,6 +124,8 @@ function damageCruiseShip(ship: T.Object3D, shipFromWorld: T.Matrix4) {
   const bounds = new T.Box2().setFromPoints(wreckTear).expandByScalar(2)
   const damageBounds = new T.Box3(new T.Vector3(bounds.min.x, bounds.min.y, tearDepth),
     new T.Vector3(bounds.max.x, bounds.max.y, 12))
+  const sternBounds = damageBounds.clone().applyMatrix4(new T.Matrix4().compose(
+    new T.Vector3(sternTear.x, sternTear.y, 0), new T.Quaternion(), new T.Vector3(sternTear.scale, sternTear.scale, 1)))
   const mask = tearMask(bounds)
   const maskSize = bounds.getSize(new T.Vector2())
   const meshBounds = new T.Box3()
@@ -94,10 +140,11 @@ function damageCruiseShip(ship: T.Object3D, shipFromWorld: T.Matrix4) {
       shader.uniforms.tearMin = { value: bounds.min }
       shader.uniforms.tearSize = { value: maskSize }
       shader.uniforms.tearDepth = { value: tearDepth }
+      shader.uniforms.sternTear = { value: new T.Vector3(sternTear.x, sternTear.y, sternTear.scale) }
       shader.vertexShader = 'uniform mat4 wreckFromWorld; varying vec3 wreckLocal;\n' + shader.vertexShader.replace(
         '#include <project_vertex>', 'wreckLocal = (wreckFromWorld * (modelMatrix * vec4(transformed, 1.))).xyz;\n#include <project_vertex>')
       shader.fragmentShader = `uniform sampler2D tearMask; uniform vec2 tearMin, tearSize;
-        uniform float tearDepth; varying vec3 wreckLocal;\n` + shader.fragmentShader.replace('#include <color_fragment>', `
+        uniform float tearDepth; uniform vec3 sternTear; varying vec3 wreckLocal;\n` + shader.fragmentShader.replace('#include <color_fragment>', `
         #include <color_fragment>
         vec2 tearUV = (wreckLocal.xy - tearMin) / tearSize;
         if (wreckLocal.z > tearDepth && all(greaterThan(tearUV, vec2(0.))) && all(lessThan(tearUV, vec2(1.)))) {
@@ -105,6 +152,12 @@ function damageCruiseShip(ship: T.Object3D, shipFromWorld: T.Matrix4) {
           if (edge < .5) discard;
           float soot = smoothstep(.52, .89, edge + .065 * sin(wreckLocal.x * 4.2 + wreckLocal.y * 7.7));
           diffuseColor.rgb *= mix(vec3(.12,.10,.088), vec3(1.), soot);
+        }
+        vec2 sternUV = ((wreckLocal.xy - sternTear.xy) / sternTear.z - tearMin) / tearSize;
+        if (wreckLocal.z > tearDepth && all(greaterThan(sternUV, vec2(0.))) && all(lessThan(sternUV, vec2(1.)))) {
+          float edge = texture2D(tearMask, sternUV).r;
+          if (edge < .5) discard;
+          diffuseColor.rgb *= mix(vec3(.10,.09,.08), vec3(1.), smoothstep(.51,.91,edge));
         }
       `)
     }
@@ -116,7 +169,9 @@ function damageCruiseShip(ship: T.Object3D, shipFromWorld: T.Matrix4) {
     if (!(node instanceof T.Mesh)) return
     const geometry = node.geometry as T.BufferGeometry
     if (!geometry.boundingBox) geometry.computeBoundingBox()
-    if (!geometry.boundingBox || !meshBounds.copy(geometry.boundingBox).applyMatrix4(node.matrixWorld).intersectsBox(damageBounds)) return
+    if (!geometry.boundingBox) return
+    meshBounds.copy(geometry.boundingBox).applyMatrix4(node.matrixWorld)
+    if (!meshBounds.intersectsBox(damageBounds) && !meshBounds.intersectsBox(sternBounds)) return
     node.material = Array.isArray(node.material) ? node.material.map(cutMaterial) : cutMaterial(node.material)
   })
 
@@ -158,7 +213,15 @@ function damageCruiseShip(ship: T.Object3D, shipFromWorld: T.Matrix4) {
   interior.setAttribute('color', new T.Float32BufferAttribute(colors, 3))
   interior.setIndex(indices)
   interior.computeVertexNormals()
-  return new T.Mesh(interior, new T.MeshStandardMaterial({ vertexColors: true, side: T.DoubleSide, roughness: 0.96, flatShading: true }))
+  const backing = new T.Mesh(interior, new T.MeshStandardMaterial({
+    vertexColors: true, side: T.DoubleSide, roughness: 0.96, flatShading: true,
+  }))
+  const sternBacking = backing.clone()
+  sternBacking.scale.set(sternTear.scale, sternTear.scale, 0.83)
+  sternBacking.position.set(sternTear.x, sternTear.y, 0)
+  const tears = new T.Group()
+  tears.add(backing, sternBacking)
+  return tears
 }
 
 // Local Z at the sea plane along the real hull at the start and end of the list.
@@ -281,12 +344,16 @@ export class GameRenderer {
   private readonly deckPassengers = new T.Group()
   private readonly deckSlots = roster.map((_, i) =>
     new T.Vector3((i % 4) * 1.07 - 1.8, 1.585 + bootClearance, 0.3 - Math.floor(i / 4) * 1.4))
-  private readonly people = roster.map((r, i) => person(r.skin, i))
+  private readonly people = roster.map((_, i) => new SurvivorModel(i))
+  private readonly swimmerRipples = swimmerRipples(this.env.uniforms.time)
+  private readonly rippleMatrix = new T.Matrix4()
+  private readonly boardRay = new T.Raycaster(new T.Vector3(), new T.Vector3(0, -1, 0))
   private readonly marker = ring(2.1, '#82f2d7')
   private readonly peopleMarkers = roster.map(() => ring(0.87, '#ffc078'))
   private readonly sharks = Array.from({ length: 3 }, (_, i) => new SharkModel('regularShark', i / 3))
   private readonly meg = new SharkModel('megalodon')
   private readonly boatSplashes = [boatSplash(), boatSplash()]
+  private readonly breachSplash = boatSplash()
   private readonly animatedAttacks = new WeakSet<object>()
   private nextSharkBite = 0
   private readonly rescueBeam = beam(this.scene)
@@ -366,7 +433,7 @@ export class GameRenderer {
     this.camera.add(this.cabin.root)
     this.rescueGroup.add(this.helo.root, this.picker.root, this.raft.root, this.ship, this.rescueBoat, this.rope,
       this.wreckEffects.root, this.wreckWater.mesh, this.floatingDebris.root, this.marker, this.schoolBuoy,
-      ...this.people.map(p => p.root), ...this.peopleMarkers)
+      ...this.people.map(p => p.root), ...this.peopleMarkers, this.swimmerRipples, this.breachSplash.root)
     this.raft.root.position.set(rescueBoardX, 0, rescuePlaneZ)
     this.rescueBoat.position.x = R.deploy
     this.rope.geometry.setAttribute('position', new T.BufferAttribute(new Float32Array(17 * 3), 3).setUsage(T.DynamicDrawUsage))
@@ -413,6 +480,9 @@ export class GameRenderer {
       { file: 'megalodon.glb', kind: 'megalodon', models: [this.meg] },
     ] as const
     await Promise.allSettled([
+      ...roster.map(({ model }, i) => loader.loadAsync(path + model).then(({ scene }) => {
+        this.people[i].setAsset(scene)
+      }).catch((error: unknown) => console.warn(`[models] Could not load ${model}.`, error))),
       ...sharkAssets.map(({ file, kind, models }) => loader.loadAsync(path + file).then(({ scene, animations }) => {
         const sizes = models.map(model => model.setAsset(scene, animations))
         this.modelSizes[kind] = sizes[0]
@@ -461,7 +531,7 @@ export class GameRenderer {
           slot.y = (surface ?? R.deckY) + bootClearance
         }
         const deckMarks = this.rescueBoat.getObjectByName('RescueDeckMarks')
-        this.rescueBoat.clear().add(scene, this.deckPassengers)
+        this.rescueBoat.clear().add(scene, this.deckPassengers, rescueDeckTrim())
         if (deckMarks) this.rescueBoat.add(deckMarks)
       }),
     ])
@@ -542,6 +612,7 @@ export class GameRenderer {
     const departure = run.phase === 'handoff'
     const arrival = run.phase === 'outro' || run.phase === 'results' && run.outcome === 'completed'
     const isRescue = !firstPerson && !arrival
+    this.swimmerRipples.count = 0
     const newPhase = this.lastPhase !== run.phase
     this.lastPhase = run.phase
     const weatherTime = firstPerson || arrival ? run.boat.time : run.rescue.time
@@ -568,6 +639,8 @@ export class GameRenderer {
     this.env.uniforms.sharkWakeSize.value.z = 0
     this.sharks.forEach(shark => { shark.root.visible = false })
     this.boatSplashes.forEach(splash => { splash.root.visible = false })
+    this.breachSplash.root.visible = false
+    this.env.uniforms.breachWave.value.z = -1
     this.meg.root.visible = false
     this.meg.swimSpeed = 1
     const animationDt = run.paused || run.autoStop || run.record ? 0 : dt
@@ -689,7 +762,7 @@ export class GameRenderer {
       this.point.set(lerp(-44, -37, sink), lerp(10, 7, sink), -27)
       fov = 46
       this.meg.root.visible = run.elapsed > 7
-      this.meg.root.position.set(-73 + run.elapsed * 2.4, -2.35, 14)
+      this.meg.root.position.set(-81 + run.elapsed * 2.95, waveHeight(-81 + run.elapsed * 2.95, 17, t) - 2.45, 17)
       this.meg.root.rotation.set(0, Math.PI / 2, -0.02, 'YXZ')
     } else if (inArrival) {
       this.eye.set(-18 + run.elapsed * 1.1, 16 + run.elapsed * 0.75, 50)
@@ -701,33 +774,45 @@ export class GameRenderer {
       fov = 40 + push * 7
     }
     const breach = t - r.breachedAt
+    const impactAge = breach
+    if (!practice && !inIntro && impactAge >= 0 && impactAge < 3.6) {
+      this.env.uniforms.breachWave.value.set(boardBreachImpact.x, boardBreachImpact.z, impactAge)
+      if (impactAge < boatSplashDuration) this.breachSplash.update(boardBreachImpact.x, boardBreachImpact.z,
+        t, impactAge, 2.35, reduced || lowQuality)
+    }
     const warning = t - r.warningTime
     if (!inIntro && warning >= 0 && (breach >= 0 ? breach < 2.5 : warning < tuning.shark.warning)) {
       const age = breach >= 0 ? breach : warning - tuning.shark.warning
-      const vx = -14
-      const vz = 2.2
-      const x = this.raft.root.position.x + vx * age
-      const z = this.raft.root.position.z + vz * age
+      const vx = (rescueBoardX - boardBreachImpact.x) / boardBreachImpact.apexAge
+      const vz = -0.55
+      const x = boardBreachImpact.x + vx * age
+      const z = boardBreachImpact.z + vz * age
       const rise = (boardBreachHeight(age + 0.01) - boardBreachHeight(age - 0.01)) / 0.02
       this.meg.root.visible = true
       this.meg.root.position.set(x, waveHeight(x, z, t) + boardBreachHeight(age), z)
       this.meg.root.rotation.set(-Math.atan2(rise, Math.hypot(vx, vz)), Math.atan2(vx, vz), 0, 'YXZ')
       this.meg.swimSpeed = lerp(1.4, 2.1, smoothstep(age, -2.2, -1.25))
-      if (breach >= 0 && !this.animatedAttacks.has(r) && this.meg.bite(0, 1.85)) this.animatedAttacks.add(r)
+      if (age >= boardBreachImpact.apexAge && !this.animatedAttacks.has(r) && this.meg.bite(0, 1.85)) this.animatedAttacks.add(r)
       if (!reduced && breach >= 0 && breach < 0.9) this.eye.y += Math.sin(breach * 27) * 0.38
     }
     this.ship.visible = !practice && this.ship.children.length > 0
     this.helo.root.visible = !inIntro
     const approachTime = 8 - run.elapsed
-    this.helo.root.position.set(inArrival ? r.x - approachTime ** 2 * 1.15 : r.x, r.altitude, rescuePlaneZ)
+    this.helo.root.position.set(inArrival ? r.x - approachTime ** 2 * 1.15 : r.x,
+      r.altitude + (reduced ? 0 : 0.13 * Math.sin(t * 2.4)), rescuePlaneZ)
     if (this.helo.root.visible) {
       this.helo.pose(inArrival ? approachTime * 2.3 : departure ? 0 : r.velocity,
         inArrival ? 0.065 * clamp(approachTime) : departure ? 0 : r.bank, dt, reduced)
     }
+    const carriers = r.carried
+    const pairedLift = carriers.length > 1
     this.picker.root.visible = !inIntro && !inArrival
     this.picker.root.position.set(r.clawX, r.clawY, rescuePlaneZ)
     this.picker.root.rotation.z = -r.swing
-    this.picker.jaws.forEach(jaw => { jaw.rotation.z = lerp(0.39, -0.54, r.gripProgress) })
+    const jawWidth = pairedLift ? 2.09 : carriers.length ? 1.41 : 1
+    const closedAngle = pairedLift ? 0.09 : carriers.length ? -0.015 : -0.54
+    this.picker.root.scale.set(jawWidth, 1, jawWidth)
+    this.picker.jaws.forEach(jaw => { jaw.rotation.z = lerp(0.39, closedAngle, r.gripProgress) })
     this.rope.visible = this.picker.root.visible
     if (this.rope.visible) {
       const winch = this.helo.winch.getWorldPosition(this.winchStart)
@@ -756,41 +841,59 @@ export class GameRenderer {
     this.raft.root.visible = !practice
     this.raft.root.position.y = waveHeight(rescueBoardX, rescuePlaneZ, t) + 0.35
     this.raft.planks.forEach(({ plank, offset, rotation, drift }, index) => {
-      const warp = clamp(breach / 5) * drift
-      plank.position.set(warp * 1.4, 0.12 + Math.sin(t * 2 + index * 0.22) * (breach >= 0 ? 0.28 : 0.06), offset * (1 + Math.max(0, Math.abs(warp) * 0.29)))
-      plank.rotation.set(0, rotation + warp * 0.32, Math.sin(t + index * 0.1) * 0.055)
+      const warp = clamp(breach / 3.4) * drift
+      const driftAge = Math.max(0, impactAge)
+      const x = warp * 1.65 + Math.sign(drift) * Math.log1p(driftAge) * 0.65
+      const z = offset * (1 + Math.abs(warp) * .56 + Math.log1p(driftAge) * .22)
+      const distance = Math.hypot(rescueBoardX + x - boardBreachImpact.x, z - boardBreachImpact.z)
+      const pulse = impactSwell(distance, impactAge)
+      const bob = breach >= 0 ? waveHeight(rescueBoardX + x, z, t) - this.raft.root.position.y + 0.35 : 0
+      plank.position.set(x, 0.12 + bob + pulse + Math.sin(t * 2 + index * 0.22) * 0.06, z)
+      plank.rotation.set(pulse * .46, rotation + warp * 0.42, Math.sin(t + index * 0.1) * 0.055 + pulse * .52)
     })
     this.rescueBoat.position.set(R.deploy, waveHeight(R.deploy, rescuePlaneZ, t), rescuePlaneZ)
     this.rescueBoat.rotation.set(0, -0.13, Math.sin(t * 1.7) * 0.043, 'XYZ')
     this.schoolBuoy.visible = practice && !r.carried.length
     this.schoolBuoy.position.set(r.survivors[0].x, waveHeight(r.survivors[0].x, rescuePlaneZ, t) + 0.25, rescuePlaneZ)
-    const carriers = r.carried
-    this.people.forEach(({ root, arms }, index) => {
+    this.raft.root.updateMatrixWorld(true)
+    this.people.forEach((person, index) => {
+      const { root } = person
       const s = r.survivors[index]
       const mark = this.peopleMarkers[index]
       root.visible = !practice && !!s && s.state !== 'lost'
       mark.visible = root.visible && !departure && !inIntro && !!s && (s.state === 'floating' || s.state === 'debris')
-      if (!root.visible || !s) return
-      root.scale.setScalar(1.14)
+      if (!root.visible || !s || s.state === 'lost') return
       const i = carriers.indexOf(s)
       const floating = s.state === 'floating'
       const saved = s.state === 'saved'
       const parent = saved ? this.deckPassengers : this.rescueGroup
       if (root.parent !== parent) parent.add(root)
       if (saved) root.position.copy(this.deckSlots[index])
-      else root.position.set(i >= 0 ? r.clawX + (i - 0.5) * 0.59 : s.x,
-        i >= 0 ? r.clawY - 2.2 : r.survivorY(s, t) - 1.22, s.z)
-      root.rotation.z = Math.sin(t * 3.7 + index) * (floating ? 0.23 : 0.074)
-      root.rotation.y = Math.sin(index * 15.13) * 0.52
-      arms[0].rotation.z = 0.55 + Math.sin(t * 2.75 + index) * 0.3
-      arms[1].rotation.z = 0.42 + Math.sin(t * 4.0 + index) * (saved ? 0.12 : 1.7)
-      if (i >= 0) { arms[0].rotation.z = -2.4; arms[1].rotation.z = 2.4 }
+      else if (s.state === 'debris') {
+        this.boardRay.ray.origin.set(s.x, this.raft.root.position.y + 2, s.z)
+        const [plank] = this.boardRay.intersectObjects(this.raft.root.children, false)
+        root.position.set(s.x, plank?.point.y ?? this.raft.root.position.y + 0.21, s.z)
+      } else {
+        const side = pairedLift ? (i - 0.5) * 0.91 : 0
+        const clawToFeet = 1.15 + person.height * 0.73
+        const y = floating
+          ? waveHeight(s.x, s.z, t) - person.height * 0.61
+          : (i >= 0 ? r.clawY : r.survivorY(s, t)) - clawToFeet
+        root.position.set(i >= 0 ? r.clawX + side : s.x,
+          y, s.z)
+      }
+      root.rotation.set(0, Math.sin(index * 15.13) * 0.44, 0)
+      person.pose(s.state, t, reduced ? 0 : r.swing)
+      if (floating) this.swimmerRipples.setMatrixAt(this.swimmerRipples.count++,
+        this.rippleMatrix.makeTranslation(s.x, index * 0.618, s.z))
       if (mark.visible) {
         mark.position.set(s.x, waveHeight(s.x, s.z, t) + 0.12 + (s.state === 'debris' ? 0.56 : 0), s.z)
       }
       mark.material.color.copy(s.targeted ? danger : amber)
       mark.scale.setScalar(s.targeted ? 1.25 + Math.sin(t * 9) * 0.25 : 1)
     })
+    this.swimmerRipples.visible = this.swimmerRipples.count > 0
+    if (this.swimmerRipples.visible) this.swimmerRipples.instanceMatrix.needsUpdate = true
     this.sharks.forEach((shark, i) => {
       const { root } = shark
       root.visible = !practice
@@ -855,7 +958,8 @@ export class GameRenderer {
       gangway.scale.x = Math.hypot(ashoreX - aboardX, deckY - boatDeckY)
       gangway.rotation.z = Math.atan2(deckY - boatDeckY, ashoreX - aboardX)
       let disembarking = 0
-      this.people.forEach(({ root, arms }, i) => {
+      this.people.forEach((person, i) => {
+        const { root } = person
         root.visible = run.rescue.survivors[i]?.state === 'saved'
         if (!root.visible) return
         if (root.parent !== this.rescueGroup) this.rescueGroup.add(root)
@@ -870,8 +974,7 @@ export class GameRenderer {
         const z = lerp(stern - seat.x, boardingZ, crossDeck) - clearWay * (10.4 + (slot % 4) * 1.48)
         root.position.set(lerp(x, 9.25 + (slot % 2) * 1.55, clearWay), y, z)
         root.rotation.set(0, lerp(Math.PI / 2, Math.PI, smoothstep(walk, 2.55, 3.3)), 0)
-        arms[0].rotation.z = Math.sin(t * 6 + i) * (walk > 0 && walk < 7.75 ? 0.48 : 0.12)
-        arms[1].rotation.z = -arms[0].rotation.z
+        person.pose(walk > 0 && walk < 7.75 ? 'walking' : 'saved', t)
       })
       return 51
     }
@@ -890,7 +993,7 @@ export class GameRenderer {
     this.point.set(48, -4.2, 0).applyQuaternion(boat.quaternion).add(this.eye)
     this.cabin.wheel.rotation.z = -b.steer * 1.55
     this.cabin.throttle.rotation.x = lerp(-0.45, 0.56, run.desired.throttle)
-    this.cabin.setHeading(b.heading)
+    this.cabin.update(b.heading, t, b.speed, run.desired.throttle, b.x, b.z)
     for (const [h, model] of this.floatingHazards) {
       model.visible = h.z < b.z + 230 && h.z > b.z - 15
       if (model.visible) model.position.y = waveHeight(h.x, -h.z, t)
@@ -907,7 +1010,7 @@ export class GameRenderer {
     const meg = lunge.shark === 'megalodon'
     const variant = lunge.side < 0 ? 0 : 1
     const shark = meg ? this.meg : this.sharks[variant]
-    const pose = boatSharkPose(lunge, time)
+    const pose = boatSharkPose(lunge, time, MODEL_SCALES[lunge.shark].targetLength)
     shark.root.visible = true
     shark.root.position.set(pose.x, pose.y, pose.z)
     shark.root.rotation.set(pose.pitch, pose.yaw, 0, 'YXZ')
@@ -931,7 +1034,11 @@ export class GameRenderer {
       if (event.type !== 'WATER_SPLASH' || !event.boatSplash || event.x === undefined) continue
       const { shark, stage, z } = event.boatSplash
       const strength = (shark === 'megalodon' ? 1.85 : 1) * (stage === 'reentry' ? 1.12 : 1)
-      this.boatSplashes[slot++].update(event.x, z, time, age, strength, reduced || this.quality === 'low')
+      const stageTime = stage === 'reentry' ? boatLungeTiming.splashdown : boatLungeTiming.breach
+      const attack = run.boat.lunges.find(lunge => lunge.shark === shark && lunge.time >= 0
+        && Math.abs(time - age - lunge.time - stageTime) < 0.05)
+      const origin = attack ? boatSharkPose(attack, attack.time + stageTime, MODEL_SCALES[shark].targetLength) : { x: event.x, z }
+      this.boatSplashes[slot++].update(origin.x, origin.z, time, age, strength, reduced || this.quality === 'low')
     }
   }
 

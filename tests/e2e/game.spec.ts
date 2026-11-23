@@ -41,16 +41,19 @@ test('keyboard onboarding, rescue HUD and pause', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Paused', exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Settings', exact: true }).click()
   const waves = page.getByRole('group', { name: 'Wave Intensity' })
-  await expect(waves).toHaveText(/160%/)
+  await expect(waves).toHaveText(/180%/)
   await expect(page.locator('#stage canvas')).toBeVisible()
   await waves.getByRole('button', { name: 'Raise wave intensity' }).click()
-  await expect(waves).toHaveText(/170%/)
+  await expect(waves).toHaveText(/190%/)
   expect(await page.evaluate(async () => {
     const path = '/src/sim/water.ts'
     const { waveUniforms } = await import(path)
     const stored = JSON.parse(localStorage.getItem('shipwreck-settings-v1') ?? '{}')
     return [waveUniforms.waveIntensity.value, stored.waveIntensity]
-  })).toEqual([1.7, 1.7])
+  })).toEqual([1.9, 1.9])
+  const slider = page.getByRole('slider', { name: 'Wave Intensity' })
+  await slider.fill('210')
+  await expect(waves).toHaveText(/210%/)
   await page.getByRole('button', { name: /Done/ }).click()
   await page.getByRole('button', { name: /Resume/ }).click()
   await expect(page.getByRole('heading', { name: 'Paused', exact: true })).toHaveCount(0)

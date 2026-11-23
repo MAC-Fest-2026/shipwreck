@@ -5,10 +5,11 @@ import { clone as cloneSkeleton } from 'three/addons/utils/SkeletonUtils.js'
 import { clamp, damp, lerp, seededRandom } from '../core/math'
 import { boatSharkLength, harbor, reefScales, regularSharkLength, rockProfiles, type FloatingHazard, type ReefHazard, type RockVariant } from '../sim/boat'
 
-// Visual lengths in scene units. Survivors, the wooden board, and the rescue deck are fixed references.
+// Visual sizes in scene units. Survivor height, the wooden board, and the rescue deck are fixed references.
 export const MODEL_SCALES = {
-  regularShark: { label: 'Regular shark', targetLength: regularSharkLength },
-  megalodon: { label: 'Megalodon', targetLength: boatSharkLength },
+  survivor: { label: 'Survivor', targetHeight: 1.85 * 1.45 },
+  regularShark: { label: 'Regular shark', targetLength: regularSharkLength * 1.2 },
+  megalodon: { label: 'Megalodon', targetLength: boatSharkLength * 1.42 },
   rescueVessel: { label: 'Rescue vessel', scale: 1, deckAnchor: [-1.95, 1.548, 0] },
   helicopter: { label: 'Helicopter', targetLength: 14.2 },
   cruiseShip: { label: 'Cruise ship', targetLength: 145 },
@@ -274,8 +275,9 @@ export class HelicopterModel {
     // The model faces -X. Hovers retain the last heading, and turns pass through +Z.
     const heading = this.facingRight ? Math.PI : 0
     const yaw = this.posed ? damp(this.root.rotation.y, heading, 9, dt) : heading
-    const roll = reduced ? 0 : clamp((heading - yaw) * 0.055, -0.12, 0.12)
-    const pitch = this.posed ? damp(this.root.rotation.z, bank, 10, dt) : bank
+    const roll = reduced ? 0 : clamp((heading - yaw) * 0.060 + velocity * 0.005, -0.19, 0.19)
+    const forwardTilt = reduced ? bank * 0.65 : clamp(bank - velocity * 0.009, -0.31, 0.31)
+    const pitch = this.posed ? damp(this.root.rotation.z, forwardTilt, 10, dt) : forwardTilt
     // Apply the simulation's bank in the world travel plane, even while the model is turning.
     this.root.rotation.set(roll, yaw, pitch, 'ZYX')
     this.posed = true
@@ -352,30 +354,226 @@ export function raft() {
   return { root, planks }
 }
 
-export function person(skin: string, variation: number) {
-  const root = new T.Group()
-  const skinMaterial = metal(skin, 0.87, 0)
-  const jacket = metal(variation % 2 ? '#ff6a17' : '#ff8940', 0.83, 0)
-  const jumpsuit = metal(['#273949', '#243939', '#4d4f4c'][variation % 3], 0.95, 0)
-  oval(root, jacket, 0, 1.13, 0, 0.278, 0.35, 0.15)
-  oval(root, skinMaterial, 0, 1.62, 0, 0.142, 0.174, 0.135)
-  oval(root, dark, 0, 1.705, -0.021, 0.147, 0.10, 0.138)
-  box(root, dark, 0, 1.08, 0.145, 0.48, 0.06, 0.023)
-  for (const side of [-1, 1]) {
-    box(root, trim, side * 0.12, 1.31, 0.106, 0.065, 0.18, 0.08)
-    oval(root, jumpsuit, side * 0.112, 0.51, 0, 0.106, 0.47, 0.103)
-    oval(root, dark, side * 0.112, 0.083, 0.049, 0.118, 0.095, 0.14)
+export type SurvivorPose = 'debris' | 'floating' | 'carried' | 'falling' | 'saved' | 'walking'
+
+interface SurvivorJoint {
+  bone: T.Bone
+  rest: T.Quaternion
+  parentFrame: T.Quaternion
+  direction: T.Vector3
+}
+
+interface SurvivorLimbs {
+  side: number
+  shoulder?: SurvivorJoint
+  upperArm: SurvivorJoint
+  forearm: SurvivorJoint
+  hand: SurvivorJoint
+  thigh: SurvivorJoint
+  calf: SurvivorJoint
+}
+
+function survivorJoint(bone: T.Bone, end?: T.Bone): SurvivorJoint {
+  const parentFrame = bone.parent!.getWorldQuaternion(new T.Quaternion())
+  const direction = new T.Vector3()
+  if (end) {
+    direction.copy(end.getWorldPosition(new T.Vector3()))
+      .sub(bone.getWorldPosition(new T.Vector3()))
+      .applyQuaternion(parentFrame.clone().invert()).normalize()
   }
-  const arms = [-1, 1].map(side => {
-    const arm = new T.Group()
-    arm.position.set(side * 0.235, 1.33, 0.018)
-    root.add(arm)
-    oval(arm, jumpsuit, 0, -0.22, 0, 0.088, 0.25, 0.083)
-    oval(arm, skinMaterial, 0, -0.47, 0, 0.062, 0.104, 0.072)
-    return arm
-  })
-  mergeStaticMeshes(root)
-  return { root, arms }
+  return { bone, rest: bone.quaternion.clone(), parentFrame, direction }
+}
+
+export class SurvivorModel {
+  readonly root = new T.Group()
+  readonly height = MODEL_SCALES.survivor.targetHeight
+  private limbs: SurvivorLimbs[] = []
+  private hips?: SurvivorJoint
+  private spine?: SurvivorJoint
+  private chest?: SurvivorJoint
+  private neck?: SurvivorJoint
+  private head?: SurvivorJoint
+  private readonly frame = new T.Quaternion()
+  private readonly parentFrame = new T.Quaternion()
+  private readonly rotation = new T.Quaternion()
+  private readonly direction = new T.Vector3()
+  private readonly tilt = new T.Euler()
+
+  constructor(private readonly index = 0) {}
+
+  setAsset(scene: T.Object3D) {
+    const model = cloneSkeleton(scene)
+    model.updateMatrixWorld(true)
+    const originalBounds = new T.Box3().setFromObject(model, true)
+    if (!(originalBounds.max.y > originalBounds.min.y)) throw new Error('Unable to measure survivor height.')
+    const size = fitModelScale('survivor', model)
+    const bounds = new T.Box3().setFromObject(model, true)
+    const center = bounds.getCenter(new T.Vector3())
+    model.position.sub(center.setY(bounds.min.y))
+    model.updateMatrixWorld(true)
+
+    const bones = new Map<string, T.Bone>()
+    model.traverse(node => {
+      if (!(node instanceof T.Bone)) return
+      // Character Creator, Unreal, Auto-Rig Pro and Renderpeople use different bone names.
+      const name = node.name.toLowerCase().replace(/[^a-z0-9]/g, '')
+        .replace(/^(ccbase|rpmanuelanimated001dancing)/, '')
+      bones.set(name, node)
+    })
+    const findBone = (...aliases: string[]) => aliases.map(name => bones.get(name)).find(Boolean)
+    const limbs = ['l', 'r'].map(side => {
+      const findSide = (...names: string[]) => findBone(...names.flatMap(name => [`${side}${name}`, `${name}${side}`]))
+      const shoulder = findSide('clavicle', 'shoulder')
+      const upperArm = findSide('upperarm', 'carmtwistoffset', 'armstretch')
+      const forearm = findSide('forearm', 'lowerarm', 'forearmstretch')
+      const hand = findSide('hand')
+      const thigh = findSide('thigh', 'upperleg', 'thightwist', 'thighstretch')
+      const calf = findSide('calf', 'lowerleg', 'legstretch')
+      const foot = findSide('foot')
+      if (!upperArm || !forearm || !hand || !thigh || !calf || !foot) {
+        throw new Error(`Missing ${side === 'l' ? 'left' : 'right'} limb joints in survivor rig.`)
+      }
+      const outward = Math.sign(upperArm.getWorldPosition(new T.Vector3()).x - model.position.x)
+      return {
+        side: outward || (side === 'l' ? 1 : -1),
+        shoulder: shoulder && survivorJoint(shoulder),
+        upperArm: survivorJoint(upperArm, forearm), forearm: survivorJoint(forearm, hand),
+        hand: survivorJoint(hand),
+        thigh: survivorJoint(thigh, calf), calf: survivorJoint(calf, foot),
+      }
+    })
+    const hips = findBone('pelvis', 'hip', 'rootx', 'root')
+    const spine = findBone('waist', 'spine01x', 'spine01')
+    const chest = findBone('spine03x', 'spine03', 'spine02x', 'spine02', 'spine01x', 'spine01')
+    const neck = findBone('neck01', 'necktwist01', 'neckx', 'neck')
+    const head = findBone('headx', 'head') ?? neck
+    this.hips = hips && survivorJoint(hips)
+    this.spine = spine && spine !== chest ? survivorJoint(spine) : undefined
+    this.chest = chest && survivorJoint(chest)
+    this.neck = neck && neck !== head ? survivorJoint(neck) : undefined
+    this.head = head && survivorJoint(head)
+    this.limbs = limbs
+    if (chest) {
+      const shoulders = limbs.map(limb => limb.upperArm.bone.getWorldPosition(new T.Vector3()))
+      const center = shoulders[0].clone().lerp(shoulders[1], 0.5)
+      const width = shoulders[0].distanceTo(shoulders[1])
+      const jacket = new T.Group()
+      jacket.name = 'Safety-orange flotation vest'
+      jacket.position.copy(center)
+      jacket.position.y -= this.height * 0.104
+      const orangeFoam = metal('#ff690b', 0.89, 0.015)
+      const straps = metal('#322c28', 0.94, 0)
+      const reflective = metal('#e8f1f0', 0.48, 0.16)
+      const height = this.height * 0.205
+      const point = new T.Vector3()
+      let front = width * 0.19, back = -front
+      // Size the shell from each model's actual clothed torso in its bind pose.
+      model.traverse(node => {
+        if (!(node instanceof T.SkinnedMesh)) return
+        const count = node.geometry.getAttribute('position').count
+        for (let i = 0; i < count; i++) {
+          node.getVertexPosition(i, point).applyMatrix4(node.matrixWorld).sub(jacket.position)
+          if (Math.abs(point.x) > width * 0.45 || Math.abs(point.y) > height * 0.48) continue
+          front = Math.max(front, point.z)
+          back = Math.min(back, point.z)
+        }
+      })
+      const padDepth = width * 0.18
+      const frontPad = front + padDepth * 0.31, backPad = back - padDepth * 0.31
+      const reflectiveOffset = padDepth * 0.5 + 0.032
+      for (const side of [-1, 1]) {
+        const x = side * width * 0.25
+        mesh(jacket, roundedPanel(width * 0.48, height, padDepth, width * 0.09, 0.025), orangeFoam, x, 0, frontPad)
+        mesh(jacket, roundedPanel(width * 0.49, height, padDepth, width * 0.08, 0.023), orangeFoam, x, 0, backPad)
+        box(jacket, orangeFoam, x, height * 0.48, (frontPad + backPad) / 2, width * 0.18, width * 0.085, frontPad - backPad)
+        box(jacket, straps, side * width * .465, -height * 0.23, (frontPad + backPad) / 2,
+          width * .060, height * 0.088, frontPad - backPad)
+        for (const z of [frontPad + reflectiveOffset, backPad - reflectiveOffset])
+          box(jacket, reflective, x, height * 0.30, z, width * 0.31, height * 0.095, 0.012)
+        box(jacket, straps, x, -height * 0.23, frontPad + reflectiveOffset, width * 0.46, height * 0.075, 0.012)
+      }
+      mergeStaticMeshes(jacket)
+      jacket.updateMatrixWorld(true)
+      chest.attach(jacket)
+    }
+    this.root.clear().add(model)
+    return size
+  }
+
+  private turn(joint: SurvivorJoint | undefined, pitch: number, yaw: number, roll: number) {
+    if (!joint) return
+    this.rotation.setFromEuler(this.tilt.set(pitch, yaw, roll))
+    joint.bone.quaternion.copy(joint.parentFrame).invert().multiply(this.rotation)
+      .multiply(joint.parentFrame).multiply(joint.rest)
+  }
+
+  private aim(joint: SurvivorJoint, x: number, y: number, z: number) {
+    joint.bone.parent!.getWorldQuaternion(this.parentFrame).invert()
+    this.direction.set(x, y, z).normalize().applyQuaternion(this.frame).applyQuaternion(this.parentFrame)
+    joint.bone.quaternion.copy(this.rotation.setFromUnitVectors(joint.direction, this.direction)).multiply(joint.rest)
+  }
+
+  pose(state: SurvivorPose, time: number, swing = 0) {
+    if (!this.limbs.length) return
+    const phase = this.index * 0.73
+    const breath = Math.sin(time * 4.4 + phase)
+    const scan = Math.sin(time * 2.3 + phase)
+    const chestPitch = state === 'floating' ? -0.08 : state === 'saved' ? 0.035 : 0.08
+    const chestRoll = state === 'carried' ? swing * 0.45 : Math.sin(time * 3.2 + phase) * 0.07
+    const hipsActive = state === 'floating' || state === 'carried' || state === 'falling'
+    const glance = state === 'debris' ? 0.36 * breath + 0.045 : 0.05
+    this.root.getWorldQuaternion(this.frame)
+    this.turn(this.hips, 0, hipsActive ? scan * 0.09 : 0, hipsActive ? chestRoll * 0.25 : 0)
+    this.turn(this.spine, chestPitch * 0.35, 0, chestRoll * 0.3)
+    this.turn(this.chest, chestPitch * 0.65 + breath * 0.025, 0, chestRoll * 0.7)
+    this.turn(this.neck, glance * 0.28, scan * 0.07, -chestRoll * 0.15)
+    this.turn(this.head, glance * (this.neck ? 0.72 : 1), scan * 0.15, -chestRoll * 0.3)
+    for (const { side, shoulder, upperArm, forearm, hand, thigh, calf } of this.limbs) {
+      thigh.bone.quaternion.copy(thigh.rest)
+      calf.bone.quaternion.copy(calf.rest)
+      const cycle = time * 5.8 + phase + (side < 0 ? Math.PI : 0)
+      const stroke = Math.sin(cycle)
+      const recovery = Math.cos(cycle)
+      const shoulderLift = state === 'debris' ? 0.17 + stroke * 0.08 : 0.035 + breath * 0.025
+      this.turn(shoulder, 0, 0, side * shoulderLift)
+      this.turn(hand, 0, 0, side * (state === 'saved' ? 0.05 : 0.08 + stroke * 0.16))
+      switch (state) {
+        case 'debris':
+          // Feet stay planted while the arms signal and brace against the breaking board.
+          this.aim(upperArm, side * (0.48 + 0.18 * recovery), 0.79 + stroke * 0.36, 0.31 - stroke * 0.23)
+          this.aim(forearm, side * (0.18 + 0.42 * stroke), 0.83 + stroke * 0.21, 0.38 + recovery * 0.26)
+          break
+        case 'floating':
+          this.aim(upperArm, side * (0.66 + stroke * 0.23), -0.26 + recovery * 0.31, 0.65 - stroke * 0.36)
+          this.aim(forearm, side * (0.2 + stroke * 0.65), -0.11 + recovery * 0.35, 0.9 - stroke * 0.3)
+          this.aim(thigh, side * 0.19, -0.84, stroke * 0.54)
+          this.aim(calf, side * 0.12, -0.9, stroke * 0.48 - 0.28)
+          break
+        case 'carried':
+          this.aim(upperArm, side * 0.22, -0.95, stroke * 0.11 - swing * 0.17)
+          this.aim(forearm, side * 0.13, -0.97, stroke * 0.18 + 0.11)
+          this.aim(thigh, side * 0.14, -0.97, stroke * 0.2 - swing * 0.18)
+          this.aim(calf, side * 0.08, -0.95, recovery * 0.25 - 0.15)
+          break
+        case 'falling':
+          this.aim(upperArm, side * 0.82, 0.46 + stroke * 0.24, 0.34)
+          this.aim(forearm, side * 0.49, 0.7, 0.25 + recovery * 0.34)
+          this.aim(thigh, side * 0.22, -0.88, stroke * 0.3)
+          this.aim(calf, side * 0.12, -0.9, recovery * 0.2 - 0.22)
+          break
+        case 'saved':
+          this.aim(upperArm, side * 0.21, -0.97, 0.08 + breath * 0.07)
+          this.aim(forearm, side * -0.12, -0.94, 0.3 + breath * 0.05)
+          break
+        case 'walking':
+          this.aim(upperArm, side * 0.18, -0.94, -stroke * 0.38)
+          this.aim(forearm, side * 0.1, -0.95, 0.19 - stroke * 0.3)
+          this.aim(thigh, side * 0.035, -0.95, stroke * 0.37)
+          this.aim(calf, side * 0.035, -0.96, stroke * 0.37 - Math.max(0, -recovery) * 0.44)
+          break
+      }
+    }
+  }
 }
 
 const sharkClips = {
@@ -841,112 +1039,206 @@ function roundedPanel(width: number, height: number, depth: number, corner: numb
     bevelThickness: bevel, bevelSegments: 5 }).translate(0, 0, -depth / 2)
 }
 
-function bridgeCompass() {
+function marineDisplay() {
   const canvas = document.createElement('canvas')
-  canvas.width = 1024
-  canvas.height = 512
+  canvas.width = 864
+  canvas.height = 480
   const ctx = canvas.getContext('2d')!
   const texture = new T.CanvasTexture(canvas)
   texture.colorSpace = T.SRGBColorSpace
   texture.anisotropy = 4
-  const screen = new T.MeshBasicMaterial({ map: texture, toneMapped: false })
-  const cardinal = ['N', 'E', 'S', 'W']
-  let lastHeading = -1
-  const wrapHeading = (degrees: number) => (degrees + 360) % 360
-  function setHeading(radians: number) {
-    const degrees = wrapHeading(Math.round(T.MathUtils.radToDeg(radians)))
-    if (lastHeading === degrees) return
-    lastHeading = degrees
-    ctx.fillStyle = '#081a21'
-    ctx.fillRect(0, 0, 1024, 512)
-    ctx.strokeStyle = '#29515a'
-    ctx.lineWidth = 6
-    ctx.strokeRect(22, 22, 980, 468)
-    ctx.textAlign = 'center'
-    ctx.fillStyle = '#98bec0'
-    ctx.font = '600 44px monospace'
-    ctx.fillText('HEADING', 512, 102)
-    ctx.fillStyle = '#e3fff8'
-    ctx.font = '700 150px monospace'
-    ctx.fillText(String(degrees).padStart(3, '0') + '°', 512, 267)
-    ctx.save()
-    ctx.beginPath()
-    ctx.rect(46, 310, 932, 155)
-    ctx.clip()
-    for (let tick = Math.ceil((degrees - 45) / 5) * 5; tick <= degrees + 45; tick += 5) {
-      const bearing = wrapHeading(tick)
-      const x = 512 + (tick - degrees) * 11
-      const major = bearing % 15 === 0
-      ctx.fillStyle = major ? '#b7e4e4' : '#558a91'
-      ctx.fillRect(x - 2, 344, 4, major ? 44 : 24)
-      if (major) {
-        ctx.font = '600 41px monospace'
-        ctx.fillText(bearing % 90 === 0 ? cardinal[bearing / 90] : String(bearing), x, 442)
-      }
-    }
-    ctx.restore()
-    ctx.fillStyle = '#ff944d'
-    ctx.beginPath()
-    ctx.moveTo(491, 318)
-    ctx.lineTo(533, 318)
-    ctx.lineTo(512, 346)
-    ctx.closePath()
-    ctx.fill()
-    texture.needsUpdate = true
-  }
-  setHeading(0)
-  return { screen, setHeading }
+  const material = new T.MeshBasicMaterial({ map: texture, toneMapped: false })
+  return { ctx, texture, material }
 }
 
 export function cockpit() {
   const root = new T.Group()
-  const shell = metal('#f5eee2', 0.5, 0.07)
-  const safetyOrange = metal('#f66c27', 0.39, 0.08)
-  const rubber = metal('#182327', 0.85, 0)
-  const satin = metal('#aabbbf', 0.4, 0.34)
+  const shell = metal('#333d44', 0.83, 0.13)
+  const trim = metal('#737d85', 0.51, 0.23)
+  const rubber = metal('#121719', 0.86, 0)
+  const chrome = metal('#cdd9df', 0.29, 0.36)
+  const backlight = light('#8cdae7')
+  const caution = light('#ffb75b')
+  const screens = [marineDisplay(), marineDisplay(), marineDisplay()]
 
-  // Camera-space console stays within reach as the vessel heels.
-  mesh(root, roundedPanel(4.05, 0.51, 0.61, 0.21, 0.065), shell, 0, -1.22, -2.05)
-  mesh(root, roundedPanel(3.87, 0.108, 0.53, 0.052, 0.033), safetyOrange, 0, -0.965, -2.064)
-  mesh(root, roundedPanel(3.56, 0.265, 0.055, 0.10, 0.024), rubber, 0, -1.16, -1.698)
   for (const side of [-1, 1]) {
-    tube(root, rubber, [side * 1.50, -0.98, -2.02], [side * 1.81, 1.08, -2.24], 0.068)
-    tube(root, shell, [side * 1.49, -0.98, -1.98], [side * 1.80, 1.08, -2.20], 0.046)
+    const wing = mesh(root, roundedPanel(1.5, 0.45, 0.68, 0.10, 0.055), shell, side * 1.28, -1.31, -1.92)
+    wing.rotation.y = side * -0.24
+    tube(root, rubber, [side * 1.12, -0.87, -2.37], [side * 2.02, 1.16, -2.32], 0.087)
+    tube(root, trim, [side * 1.14, -0.87, -2.32], [side * 2.04, 1.16, -2.27], 0.042)
+    tube(root, rubber, [side * 1.14, -0.79, -2.55], [side * 0.84, -0.33, -2.58], 0.016)
+    tube(root, rubber, [side * 0.38, -0.30, -2.59], [side * 1.22, -0.34, -2.59], 0.018)
   }
+  mesh(root, roundedPanel(2.18, 0.55, 0.65, 0.11, 0.066), shell, 0, -1.34, -2.16)
+  box(root, rubber, 0, -1.44, -1.77, 2.42, 0.23, 0.16)
 
-  const compass = bridgeCompass()
-  const display = new T.Group()
-  display.position.set(-0.94, -0.73, -1.86)
-  display.rotation.x = -0.12
-  root.add(display)
-  mesh(display, roundedPanel(0.85, 0.445, 0.12, 0.062, 0.027), shell, 0, 0, 0)
-  mesh(display, roundedPanel(0.75, 0.393, 0.032, 0.036, 0.012), rubber, 0, 0, 0.09)
-  mesh(display, new T.PlaneGeometry(0.70, 0.35), compass.screen, 0, 0, 0.121)
+  screens.forEach((screen, index) => {
+    const offset = index - 1
+    const display = new T.Group()
+    display.position.set(offset * 0.99, -0.69 - Math.abs(offset) * 0.11, -2.27 + Math.abs(offset) * .06)
+    display.rotation.set(-0.27, -offset * .17, 0)
+    root.add(display)
+    const width = offset === 0 ? 1.12 : .92
+    mesh(display, roundedPanel(width, .56, .075, .048, .022), rubber, 0, 0, 0)
+    mesh(display, new T.PlaneGeometry(width - .09, .48), screen.material, 0, 0, .066)
+    for (let i = 0; i < 7; i++) {
+      const x = (i - 3) * .102
+      box(display, rubber, x, -.328, .05, .083, .077, .04).rotation.x = -.12
+      box(display, (i + index) % 6 === 0 ? caution : backlight, x, -.318, .073, .047, .014, .005)
+    }
+  })
 
   const column = new T.Group()
-  column.position.set(0.80, -0.63, -1.66)
+  column.position.set(0.03, -0.78, -1.74)
   column.rotation.x = -0.20
   root.add(column)
-  tube(root, rubber, [0.80, -1.09, -1.93], [0.80, -0.69, -1.93], 0.09)
-  tube(column, rubber, [0, 0, -0.35], [0, 0, -0.025], 0.105)
+  tube(column, rubber, [0, 0, -0.44], [0, 0, 0], 0.116)
   const wheel = new T.Group()
   column.add(wheel)
-  mesh(wheel, new T.TorusGeometry(0.276, 0.036, 24, 96), rubber, 0, 0, 0)
-  mesh(wheel, new T.TorusGeometry(0.249, 0.009, 12, 96), satin, 0, 0, 0.017)
+  mesh(wheel, new T.TorusGeometry(.285, .043, 18, 84), rubber, 0, 0, 0)
+  mesh(wheel, new T.TorusGeometry(.248, .013, 12, 84), chrome, 0, 0, .02)
   for (let i = 0; i < 3; i++) {
-    const angle = (i * 2 / 3 + 0.5) * Math.PI
-    tube(wheel, satin, [0, 0, 0], [Math.cos(angle) * 0.26, Math.sin(angle) * 0.26, 0], 0.024)
+    const angle = (i * 2 / 3 + .1667) * Math.PI
+    box(wheel, chrome, Math.cos(angle) * .169, Math.sin(angle) * .169, .01, .195, .044, .046).rotation.z = angle
   }
-  oval(wheel, safetyOrange, 0, 0, 0.008, 0.112, 0.112, 0.061)
-  oval(wheel, shell, 0, 0, 0.057, 0.064, 0.064, 0.018)
+  oval(wheel, chrome, 0, 0, .017, .108, .108, .049)
+  oval(wheel, rubber, 0, 0, .064, .072, .072, .015)
 
-  mesh(root, roundedPanel(0.245, 0.126, 0.34, 0.055, 0.023), rubber, 1.23, -0.95, -1.72)
+  mesh(root, roundedPanel(.37, .122, .43, .053, .024), chrome, .91, -1.03, -1.77)
   const throttle = new T.Group()
-  throttle.position.set(1.23, -0.89, -1.72)
+  throttle.position.set(.91, -.965, -1.77)
   root.add(throttle)
-  tube(throttle, satin, [0, 0, 0], [0, 0.255, 0], 0.028)
-  oval(throttle, safetyOrange, 0, 0.266, 0, 0.103, 0.052, 0.046)
+  for (const side of [-1, 1]) {
+    const x = side * .088
+    tube(throttle, chrome, [x, 0, 0], [x, .222, -.026], .019)
+    oval(throttle, rubber, x, .237, -.026, .064, .047, .040)
+  }
+  oval(root, rubber, 1.28, -1.01, -1.83, .11, .063, .108)
+  tube(root, chrome, [1.28, -1.01, -1.83], [1.31, -.846, -1.85], .022)
+  oval(root, rubber, 1.31, -.834, -1.85, .068, .051, .059)
 
+  // Replace the driver-side furnishings in camera space without altering the hull GLB.
+  mesh(root, roundedPanel(.79, .18, .68, .084, .058), rubber, .05, -1.39, .66)
+  mesh(root, roundedPanel(.77, .70, .16, .10, .063), rubber, .05, -1.01, .96).rotation.x = -.14
+  for (const side of [-1, 1]) {
+    oval(root, rubber, .05 + side * .33, -1.33, .64, .09, .15, .36)
+    oval(root, rubber, .05 + side * .33, -.99, .9, .087, .34, .12)
+  }
   mergeStaticMeshes(root)
-  return { root, wheel, throttle, setHeading: compass.setHeading }
+
+  let displayFrame = -1
+  function update(heading: number, time: number, speed: number, throttlePower: number, courseX: number, courseZ: number) {
+    const frame = Math.floor(time * 8)
+    if (frame === displayFrame) return
+    displayFrame = frame
+    const bearing = ((Math.round(T.MathUtils.radToDeg(heading)) % 360) + 360) % 360
+    for (const [index, screen] of screens.entries()) {
+      const ctx = screen.ctx
+      ctx.fillStyle = '#0b1824'
+      ctx.fillRect(0, 0, 864, 480)
+      ctx.fillStyle = '#173445'
+      ctx.fillRect(0, 0, 864, 68)
+      ctx.fillStyle = '#d0f3fa'
+      ctx.font = 'bold 33px monospace'
+      ctx.fillText(['PROPULSION', 'SURFACE RADAR', 'COASTAL CHART'][index], 29, 46)
+      if (index === 0) {
+        for (let i = 0; i < 2; i++) {
+          const x = 230 + i * 404
+          const amount = clamp(i ? throttlePower : speed / 16)
+          ctx.lineWidth = 15
+          for (let j = 0; j < 11; j++) {
+            const angle = Math.PI * (.76 + j * .148)
+            ctx.strokeStyle = j / 10 <= amount ? '#49d8a5' : '#335667'
+            ctx.beginPath()
+            ctx.arc(x, 251, 135, angle, angle + .098)
+            ctx.stroke()
+          }
+          ctx.font = 'bold 63px monospace'
+          ctx.fillStyle = '#f0fbfa'
+          ctx.textAlign = 'center'
+          ctx.fillText(i ? String(Math.round(amount * 100)) + '%' : speed.toFixed(1), x, 273)
+          ctx.font = '25px monospace'
+          ctx.fillStyle = '#9ac8d6'
+          ctx.fillText(i ? 'THROTTLE' : 'SPEED', x, 333)
+          ctx.textAlign = 'left'
+        }
+      } else if (index === 1) {
+        ctx.strokeStyle = '#3b806f'
+        ctx.lineWidth = 3
+        for (const radius of [43, 86, 129, 172]) {
+          ctx.beginPath()
+          ctx.arc(285, 270, radius, 0, Math.PI * 2)
+          ctx.stroke()
+        }
+        ctx.beginPath()
+        ctx.moveTo(285, 98); ctx.lineTo(285, 442); ctx.moveTo(113, 270); ctx.lineTo(457, 270)
+        ctx.stroke()
+        const sweep = time * 1.86
+        ctx.fillStyle = '#16efa947'
+        ctx.beginPath()
+        ctx.moveTo(285, 270)
+        ctx.arc(285, 270, 171, sweep - .48, sweep)
+        ctx.closePath()
+        ctx.fill()
+        ctx.strokeStyle = '#a2fdd8'
+        ctx.beginPath()
+        ctx.moveTo(285, 270)
+        ctx.lineTo(285 + Math.cos(sweep) * 172, 270 + Math.sin(sweep) * 172)
+        ctx.stroke()
+        ctx.fillStyle = '#a9cee0'
+        ctx.font = 'bold 31px monospace'
+        ctx.fillText('HDG ' + String(bearing).padStart(3, '0') + '°', 633, 46)
+        ctx.font = '25px monospace'
+        ctx.fillText('SHORT RANGE', 515, 164)
+      } else {
+        ctx.fillStyle = '#244d66'
+        ctx.fillRect(18, 89, 828, 365)
+        ctx.strokeStyle = '#638b9b'
+        ctx.lineWidth = 1.5
+        for (let i = 1; i < 8; i++) {
+          const x = 18 + i * 103.5
+          ctx.beginPath(); ctx.moveTo(x, 89); ctx.lineTo(x, 454); ctx.stroke()
+        }
+        ctx.fillStyle = '#9ab585'
+        ctx.beginPath()
+        ctx.moveTo(350, 89); ctx.lineTo(397, 133); ctx.lineTo(455, 145); ctx.lineTo(488, 184)
+        ctx.lineTo(532, 172); ctx.lineTo(588, 196); ctx.lineTo(644, 156); ctx.lineTo(816, 148)
+        ctx.lineTo(845, 209); ctx.lineTo(845, 89); ctx.closePath(); ctx.fill()
+        const y = lerp(429, 209, clamp(courseZ / 900))
+        const x = 487 + clamp(courseX / 45, -1, 1) * 140
+        ctx.setLineDash([11, 8])
+        ctx.strokeStyle = '#ffc860'
+        ctx.lineWidth = 3.5
+        ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(560, 196); ctx.stroke()
+        ctx.setLineDash([])
+        ctx.fillStyle = '#fdfbde'
+        ctx.beginPath(); ctx.moveTo(x, y - 15); ctx.lineTo(x - 9, y + 10); ctx.lineTo(x + 9, y + 10); ctx.closePath(); ctx.fill()
+        ctx.font = 'bold 23px monospace'
+        ctx.fillText('HARBOR', 602, 232)
+      }
+      screen.texture.needsUpdate = true
+    }
+  }
+  update(0, 0, 0, 0, 0, 0)
+  return { root, wheel, throttle, update }
+}
+
+export function rescueDeckTrim() {
+  const trim = new T.Group()
+  const decking = metal('#344048', .9, .05)
+  const seams = metal('#637078', .96, .03)
+  const frame = metal('#87969a', .47, .44)
+  const cushion = metal('#303b42', .89, 0)
+  // Keep fixtures beside the usable aft-deck slots and leave the rescue opening clear.
+  for (const side of [-1, 1]) {
+    box(trim, decking, -.63, 1.465, side * 1.67, 4.8, .022, .33)
+    for (let i = 0; i < 3; i++)
+      box(trim, seams, -.63, 1.480, side * (1.53 + .124 * i), 4.74, .005, .014)
+  }
+  for (const z of [-.69, .69])
+    tube(trim, frame, [-3.55, 1.49, z], [-3.55, 1.98, z], .04)
+  mesh(trim, roundedPanel(1.75, .11, .47, .049, .018), cushion, -3.55, 1.96, 0).rotation.y = Math.PI / 2
+  mesh(trim, roundedPanel(1.75, .33, .11, .053, .020), cushion, -3.78, 2.13, 0).rotation.y = Math.PI / 2
+  mergeStaticMeshes(trim)
+  return trim
 }

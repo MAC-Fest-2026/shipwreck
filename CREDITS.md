@@ -74,4 +74,19 @@ Island model from BlenderKit (asset ID f1dde71a-9b17-445c-9145-ffa13844573b).
 | Priya Nair | bf_emma |
 | Ana Kapoor | af_bella |
 
+## Survivor character models
+
+| In-game character | Original asset | Creator credited in the download |
+|---|---|---|
+| Mara Voss, First Officer | Business Girl | [giyas3dartist](https://www.cgtrader.com/designers/giyas3dartist) |
+| Priya Nair, ER Nurse | Megane | [martinthedark-](https://www.cgtrader.com/designers/martinthedark-) |
+| Ana Kapoor, Honeymooner | Female Office Worker | [cpookongploy](https://www.cgtrader.com/designers/cpookongploy) |
+| Elias Rook, Engineer | Norm European Worker | [adam127](https://www.cgtrader.com/designers/adam127) |
+| Tommy Ricci, Ship's Cook | Busy Man | [adam127](https://www.cgtrader.com/designers/adam127) |
+| Dev Kapoor, Honeymooner | Matt | [martinthedark-](https://www.cgtrader.com/designers/martinthedark-) |
+| Hollis Brandt, Retired Fisherman | Military Survivalist | [Slayver](https://www.cgtrader.com/designers/slayver) |
+| Jay Okafor, Student Deckhand | Renderpeople Manuel, animated dancing | [Renderpeople](https://www.cgtrader.com/designers/renderpeople) |
+
+**Changes** Adapted the rigs and materials for the game, centered and optimized the models for GLB delivery, and replaced source animation playback with procedural rescue motion. Selected the civilian clothing variant for Hollis.
+
 **CGTrader usage note** The CGTrader assets may be incorporated into the finished game with safeguards against access to the model data. Their licenses prohibit sharing the raw model files with others. [CGTrader license terms](https://www.cgtrader.com/pages/terms-and-conditions)

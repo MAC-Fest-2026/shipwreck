@@ -1,6 +1,14 @@
 import { clamp } from '../core/math'
 
-export const waveIntensity = { min: 0.5, max: 2.5, step: 0.1, default: 1.6 }
+export const waveIntensity = { min: 0.5, max: 2.5, step: 0.1, default: 1.8 }
+
+// Short-lived displacement from the rescue-phase breach. Base buoyancy stays on the ocean formula.
+export function impactSwell(distance: number, age: number) {
+  if (age < 0 || age > 3.6) return 0
+  const front = distance - 12 * age
+  return 1.05 * Math.sin(front * 0.88) * Math.exp(-front * front * 0.075 - age * 0.9)
+    * clamp(age * 8) * clamp((3.6 - age) * 2)
+}
 export const waveUniforms = { waveIntensity: { value: waveIntensity.default } }
 
 export function normalizeWaveIntensity(value: unknown) {

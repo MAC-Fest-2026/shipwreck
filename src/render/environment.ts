@@ -32,6 +32,7 @@ export type SceneUniforms = {
   shoal: { value: T.Vector4 }
   mooring: { value: T.Vector4 }
   boardFoam: { value: T.Vector3 }
+  breachWave: { value: T.Vector3 }
   hullFoamPose: { value: T.Vector4 }
   hullFoamSize: { value: T.Vector3 }
   sharkWakePose: { value: T.Vector4 }
@@ -63,6 +64,7 @@ export function environmentSettings(): SceneUniforms {
     shoal: { value: new T.Vector4(0, 0, 1, 1) },
     mooring: { value: new T.Vector4((minX + maxX) / 2, -(minZ + maxZ) / 2, (maxX - minX) / 2, (maxZ - minZ) / 2) },
     boardFoam: { value: new T.Vector3() },
+    breachWave: { value: new T.Vector3(0, 0, -1) },
     hullFoamPose: { value: new T.Vector4(0, 0, 1, 0) }, hullFoamSize: { value: new T.Vector3(1, 1, 0) },
     sharkWakePose: { value: new T.Vector4(0, 0, 0, 1) }, sharkWakeSize: { value: new T.Vector3() },
   }
@@ -87,12 +89,25 @@ export function environment(scene: T.Scene): SceneEnvironment {
       crestScale: { value: 1 / Math.max(waveAmplitude, 0.001) } },
     vertexShader: `
       uniform float time;
+      uniform vec3 breachWave;
       varying vec3 world;
       varying vec2 waveSlope;
       ${waterGlsl}
       void main() {
         world = (modelMatrix * vec4(position,1.)).xyz;
         vec3 wave = oceanSample(world.xz, time);
+        float age = breachWave.z;
+        if (age >= 0. && age <= 3.6) {
+          vec2 offset = world.xz - breachWave.xy;
+          float distanceFromImpact = length(offset);
+          float front = distanceFromImpact - 12. * age;
+          float envelope = 1.05 * exp(-front * front * .075 - age * .9)
+            * clamp(age * 8., 0., 1.) * clamp((3.6 - age) * 2., 0., 1.);
+          float crest = sin(front * .88);
+          wave.x += crest * envelope;
+          wave.yz += envelope * (.88 * cos(front * .88) - .15 * front * crest)
+            * offset / max(distanceFromImpact, .01);
+        }
         world.y = wave.x;
         waveSlope = wave.yz;
         gl_Position = projectionMatrix * viewMatrix * vec4(world,1.);
@@ -409,6 +424,8 @@ export function wreckAtmosphere() {
     new T.Vector3(-46, 16.95, -5),
     new T.Vector3(-8, 15.57, 2),
     new T.Vector3(28, 18.27, -5),
+    new T.Vector3(-56, 9.6, 5.4),
+    new T.Vector3(-61, 7.8, 1.6),
   ]
   const deckOrigins = fireSites.map(() => new T.Vector3())
   const uniforms = {
@@ -431,14 +448,14 @@ export function wreckAtmosphere() {
   const smoke = new T.Mesh(particles(10), new T.ShaderMaterial({
     uniforms, transparent: true, depthWrite: false,
     vertexShader: `
-      uniform vec3 deckOrigins[3];
+      uniform vec3 deckOrigins[5];
       uniform float time;
       attribute vec4 particle;
       varying vec2 tex;
       varying float age, seed, strength;
       void main() {
         seed=particle.y;
-        strength=vec3(.73,1.,.57)[int(particle.x)];
+        strength=.62 + .28 * fract(particle.x * .618 + .4);
         age=fract(time*(.135+particle.x*.007)+particle.z*.618);
         vec3 center=deckOrigins[int(particle.x)];
         center+=vec3(18.*age+sin(age*6.+seed*6.)*4.*age,
@@ -470,14 +487,14 @@ export function wreckAtmosphere() {
   const flame = new T.Mesh(particles(3), new T.ShaderMaterial({
     uniforms, transparent: true, depthWrite: false,
     vertexShader: `
-      uniform vec3 deckOrigins[3];
+      uniform vec3 deckOrigins[5];
       uniform float time;
       attribute vec4 particle;
       varying vec2 tex;
       varying float seed;
       void main() {
         seed=particle.y;
-        float strength=vec3(.72,1.13,.78)[int(particle.x)];
+        float strength=.53 + .48 * fract(particle.x * .618 + .2);
         vec3 center=deckOrigins[int(particle.x)]+vec3((particle.z-1.)*.78+(seed-.5)*.49,.05,(particle.w-.5)*.6);
         float height=(1.4+seed*2.)*(.77+.23*sin(time*5.6+seed*23.))*strength;
         vec4 viewPos=viewMatrix*vec4(center,1.);
@@ -694,7 +711,7 @@ export function wreckDebris() {
       let bestGap = -Infinity
       // Give pieces a little clearance from each other and leave the pickup area open.
       for (let attempt = 0; attempt < 8; attempt++) {
-        const x = nearWreck ? -38 + random() * 77 : -23 + random() * 49
+        const x = nearWreck ? (i % 4 === 0 ? -66 + random() * 22 : -38 + random() * 77) : -23 + random() * 49
         const z = nearWreck ? 24 + random() * 15 : (7 + random() * 11) * (i % 2 ? 1 : -1)
         const gap = sites.reduce((min, site) => Math.min(min,
           Math.hypot(x - site.x, z - site.z) - footprint - site.radius), Infinity)
