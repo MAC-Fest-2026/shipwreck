@@ -1,10 +1,10 @@
-import { clamp } from '../core/math'
+import { clamp, lerp } from '../core/math'
 import type { EventType, GameEvent } from '../game/events'
 import type { ScenePhase } from '../game/session'
 import { AudioClips, bufferTo, dialogueDelivery, gainTo, type DialogueEmotion } from './clips'
 import {
   boatEngineMix, earlyReflections, effects as synthesize, loopEngine, loopMusic, loopRain, loopSlot,
-  noiseBuffer, prepareHelicopterLoop, radioLeadIn, radioSlots, radioTail, radioTransmission,
+  noiseBuffer, prepareEngineLoop, recordingGain, radioLeadIn, radioSlots, radioTail, radioTransmission,
   survivorChannel, voiceFilter, voiceTake, type EffectSlot,
 } from './sounds'
 
@@ -44,6 +44,7 @@ const deckCalls = new Set<EventType>(['SURVIVOR_DELIVERED', 'ALL_ABOARD', 'BOAT_
 const voiceGapMs = 650
 const voiceQueueMs = 3200
 const rotorFadeSeconds = 7
+const platformSplashLevel = 1.32
 const effectCooldownMs: Partial<Record<EffectSlot, number>> = { 'boat-rock-hit': 650, 'boat-shark-hit': 460, 'water-splash': 180 }
 const base = import.meta.env.BASE_URL
 
@@ -52,12 +53,34 @@ function effectFor(event: GameEvent): EffectSlot | undefined {
     case 'CLAW_CLOSED': case 'CLAW_OPENED': return 'claw-click'
     case 'SURVIVOR_DELIVERED': case 'LANDED': case 'QUICK_SAVE': return 'success-chime'
     case 'SHARK_TELEGRAPH': case 'LUNGE_WARNING': case 'MEGALODON_WARNING': return 'danger-warning'
-    case 'MEGALODON_BREACH': case 'SHARK_STRIKE': case 'WATER_SPLASH': return 'water-splash'
+    case 'SHARK_STRIKE': case 'WATER_SPLASH': return 'water-splash'
     case 'BOAT_COLLISION':
-      if (event.impact === 'rock') return 'boat-rock-hit'
-      if (event.impact === 'shark') return 'boat-shark-hit'
+      if (event.impact === 'rock' || event.impact === 'pier' || event.impact === 'shark') return 'boat-rock-hit'
       return 'impact-thud'
   }
+}
+
+function impactMix(event: GameEvent) {
+  const { speed, damage, shark } = event.impactDetails ?? { speed: 0, damage: 0 }
+  if (shark) {
+    const severity = clamp(damage / (shark === 'megalodon' ? 35 : 24))
+    return { level: lerp(0.16, 1.15, severity), rate: lerp(1.1, 0.74, severity), bass: severity * 7 }
+  }
+  const severity = clamp(speed / 16 * 0.62 + damage / 25 * 0.38)
+  return { level: lerp(0.08, 1.06, severity), rate: lerp(1.18, 0.77, severity), bass: severity * 6 }
+}
+
+function splashMix(event: GameEvent) {
+  if (event.boatSplash?.shark === 'megalodon') {
+    const reentry = event.boatSplash.stage === 'reentry'
+    return { level: platformSplashLevel * (reentry ? 0.35 : 0.33),
+      rate: reentry ? 0.77 : 0.83, bass: reentry ? 4 : 3, heavy: true }
+  }
+  if (event.boatSplash) return { level: platformSplashLevel * 0.30, rate: 1.03, bass: 0 }
+  if (event.heavySplash) return { level: platformSplashLevel, rate: 0.72, bass: 5 }
+  const impact = event.impactDetails && impactMix(event)
+  return impact ? { level: impact.level * 0.7, rate: impact.rate, bass: impact.bass * 0.45 }
+    : { level: 0.38, rate: 1.05, bass: 0 }
 }
 
 function radioChannel(audio: AudioContext, output: AudioNode) {
@@ -84,6 +107,14 @@ function makeMix(audio: AudioContext, settings: SoundSettings) {
   const master = gainTo(audio, audio.destination, settings.muted ? 0 : clamp(settings.master))
   const music = gainTo(audio, master, clamp(settings.music))
   const effects = gainTo(audio, master, clamp(settings.effects))
+  const actionEffects = gainTo(audio, master, clamp(settings.effects))
+  const limiter = audio.createDynamicsCompressor()
+  limiter.threshold.value = -8
+  limiter.knee.value = 7
+  limiter.ratio.value = 6
+  limiter.attack.value = 0.003
+  limiter.release.value = 0.14
+  limiter.connect(actionEffects)
   const voice = gainTo(audio, master, settings.spoken ? clamp(settings.voice) : 0)
   const noise = noiseBuffer(audio, 1, 0, 402)
   const radio = radioChannel(audio, voice)
@@ -93,11 +124,11 @@ function makeMix(audio: AudioContext, settings: SoundSettings) {
   for (const slug of Object.keys(synthesize)) void clips.override(slug)
   const radioClips = Promise.all(radioSlots.map(slug => clips.override(slug)))
   return {
-    audio, clips, master, music, effects, voice, noise, radio, radioClips, deck, water,
+    audio, clips, master, music, effects, actionEffects, limiter, voice, noise, radio, radioClips, deck, water,
     rain: loopSlot(audio, clips, 'rain-ambience', effects, out => loopRain(audio, out)),
     musicLoop: loopSlot(audio, clips, 'tension-music', music, out => loopMusic(audio, out)),
-    helicopter: loopSlot(audio, clips, 'helicopter-engine', effects, out => loopEngine(audio, out, noise, true), prepareHelicopterLoop),
-    boat: loopSlot(audio, clips, 'boat-engine', effects, out => loopEngine(audio, out, noise, false)),
+    helicopter: loopSlot(audio, clips, 'helicopter-engine', effects, out => loopEngine(audio, out, noise, true), prepareEngineLoop),
+    boat: loopSlot(audio, clips, 'boat-engine', limiter, out => loopEngine(audio, out, noise, false), prepareEngineLoop),
   }
 }
 
@@ -107,7 +138,8 @@ export class Radio {
   private readonly played = new Map<string, number>()
   private readonly lastLine = new Map<string, number>()
   private readonly lastSpeaker = new Map<string, number>()
-  private readonly lastEffect = new Map<EffectSlot, number>()
+  private readonly lastEffect = new Map<EffectSlot, { at: number; level: number }>()
+  private readonly effectGains = new WeakMap<AudioBuffer, number>()
   private queued?: VoiceCue
   private readonly lifted = new Set<string>()
   private readonly aboard = new Set<string>()
@@ -155,6 +187,7 @@ export class Radio {
     mix.master.gain.setTargetAtTime(this.settings.muted ? 0 : clamp(this.settings.master), t, 0.06)
     mix.music.gain.setTargetAtTime(clamp(this.settings.music) * (this.ducked ? 0.51 : 1), t, 0.15)
     mix.effects.gain.setTargetAtTime(clamp(this.settings.effects) * (this.ducked ? 0.64 : 1), t, 0.15)
+    mix.actionEffects.gain.setTargetAtTime(clamp(this.settings.effects) * (this.ducked ? 0.87 : 1), t, 0.15)
     mix.voice.gain.setTargetAtTime(this.settings.spoken ? clamp(this.settings.voice) : 0, t, 0.06)
   }
 
@@ -197,7 +230,11 @@ export class Radio {
     this.trackBoarding(event)
     const offset = (event.x ?? listenerX) - listenerX
     const slot = effectFor(event)
-    if (slot) this.playEffect(slot, offset, now, event.heavySplash || event.type === 'MEGALODON_BREACH')
+    if (slot === 'boat-rock-hit') {
+      this.playEffect(slot, offset, now, impactMix(event), event.impact === 'shark' ? 'boat-shark-hit' : slot)
+      if (event.impact !== 'shark') this.playEffect('water-splash', offset, now, splashMix(event))
+    } else if (slot === 'water-splash') this.playEffect(slot, offset, now, splashMix(event))
+    else if (slot) this.playEffect(slot, offset, now)
     const candidates = this.lines.filter(line => line.trigger.event === event.type
       && (radioSpeaker(line.speaker) || eligible.has(line.speaker))
       && (this.played.get(line.id) ?? 0) < line.maxPlays
@@ -338,23 +375,44 @@ export class Radio {
     this.aboard.clear()
   }
 
-  private playEffect(slot: EffectSlot, x: number, now: number, heavy: boolean) {
+  private playEffect(slot: EffectSlot, x: number, now: number, profile?: { level: number; rate: number; bass: number; heavy?: boolean },
+    fallback = slot) {
     const mix = this.mix
     if (!mix || mix.audio.state !== 'running' || this.settings.muted || this.settings.effects <= 0 || this.settings.master <= 0) return
-    if (now - (this.lastEffect.get(slot) ?? -Infinity) < (effectCooldownMs[slot] ?? 0)) return
-    this.lastEffect.set(slot, now)
-    const epoch = this.soundEpoch
-    void mix.clips.override(slot).then(buffer => {
-      if (epoch !== this.soundEpoch) return
-      const pan = mix.audio.createStereoPanner()
-      pan.pan.value = clamp(x / 80, -1, 1) * 0.75
-      pan.connect(mix.effects)
-      if (buffer) {
-        const gain = gainTo(mix.audio, pan, slot === 'water-splash' && !heavy ? 0.37 : 0.61)
-        const source = bufferTo(mix.audio, gain, buffer)
-        source.start()
-        source.addEventListener('ended', () => { gain.disconnect(); pan.disconnect() }, { once: true })
-      } else synthesize[slot](mix.audio, pan, mix.audio.currentTime, mix.noise, heavy)
-    })
+    const { level, rate, bass } = profile ?? { level: 0.61, rate: 1, bass: 0 }
+    const previous = this.lastEffect.get(slot)
+    if (previous && now - previous.at < (effectCooldownMs[slot] ?? 0) && level < previous.level * 1.45) return
+    this.lastEffect.set(slot, { at: now, level })
+    const { audio, clips } = mix
+    const pan = audio.createStereoPanner()
+    pan.pan.value = clamp(x / 80, -1, 1) * 0.75
+    pan.connect(profile ? mix.limiter : mix.effects)
+    const buffer = clips.readyOverride(slot) ?? clips.readyOverride(fallback)
+    const filter = bass > 0 ? voiceFilter(audio, 'lowshelf', 320, bass) : null
+    filter?.connect(pan)
+    const gain = gainTo(audio, filter ?? pan, level)
+    const dispose = () => { gain.disconnect(); filter?.disconnect(); pan.disconnect() }
+    const t = audio.currentTime
+    if (!buffer) {
+      synthesize[fallback](audio, gain, t, mix.noise, profile?.heavy ?? level >= 0.75)
+      setTimeout(dispose, 850)
+      return
+    }
+    const source = bufferTo(audio, gain, buffer)
+    // Impact recordings can contain several takes separated by silence. Play a single hit.
+    const duration = slot === 'boat-rock-hit' ? Math.min(2.55, buffer.duration) : buffer.duration
+    if (profile) {
+      const trim = this.effectGains.get(buffer) ?? recordingGain(buffer, duration)
+      this.effectGains.set(buffer, trim)
+      gain.gain.value *= trim
+    }
+    source.playbackRate.value = rate
+    if (duration < buffer.duration) {
+      const stop = t + duration / rate
+      gain.gain.setValueAtTime(gain.gain.value, stop - 0.12)
+      gain.gain.linearRampToValueAtTime(0, stop)
+    }
+    source.addEventListener('ended', dispose, { once: true })
+    source.start(t, 0, duration)
   }
 }

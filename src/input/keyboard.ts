@@ -1,5 +1,7 @@
-import { clamp } from '../core/math'
+import { approach, clamp } from '../core/math'
 import { neutralIntent, type ControlIntent, type IntentProvider } from './intent'
+
+export type BoatThrottle = 'hold' | 'sticky'
 
 export class KeyboardMouseIntentProvider implements IntentProvider {
   private readonly abort = new AbortController()
@@ -7,6 +9,7 @@ export class KeyboardMouseIntentProvider implements IntentProvider {
   private intent = { ...neutralIntent }
   private lastTime = 0
   private pressed = false
+  private boatThrottle: BoatThrottle | undefined
   active = false
   constructor() {
     const { signal } = this.abort
@@ -27,13 +30,20 @@ export class KeyboardMouseIntentProvider implements IntentProvider {
     window.addEventListener('keyup', event => this.keys.delete(event.code), { signal })
     window.addEventListener('blur', () => { this.keys.clear(); this.pressed = false }, { signal })
   }
-  poll(now: number): ControlIntent {
+  poll(now: number, mode?: BoatThrottle, playing = true): ControlIntent {
     const dt = Math.min(0.08, (now - this.lastTime) / 1000)
     this.lastTime = now
     const axis = (pos: string, neg: string) => Number(this.keys.has(pos)) - Number(this.keys.has(neg))
     this.intent.heliTargetX = clamp(this.intent.heliTargetX + axis('ArrowRight', 'ArrowLeft') * dt * 0.63, -1, 1)
     this.intent.winchTarget = clamp(this.intent.winchTarget + axis('ArrowDown', 'ArrowUp') * dt * 0.61)
-    this.intent.throttle = clamp(this.intent.throttle + axis('KeyW', 'KeyS') * dt * 0.65)
+    if (!mode || !this.boatThrottle) this.intent.throttle = mode === 'hold' ? 0 : neutralIntent.throttle
+    this.boatThrottle = mode
+    if (mode && playing) {
+      const forward = axis('KeyW', 'KeyS')
+      this.intent.throttle = mode === 'sticky'
+        ? clamp(this.intent.throttle + forward * dt * 0.65)
+        : approach(this.intent.throttle, forward > 0 ? 1 : 0, dt * (forward > 0 ? 0.8 : forward < 0 ? 2.1 : 1.25))
+    }
     return { ...this.intent, steer: axis('KeyD', 'KeyA'), gripClosed: this.pressed || this.keys.has('KeyF') }
   }
   dispose() { this.abort.abort() }

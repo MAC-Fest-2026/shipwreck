@@ -14,7 +14,8 @@ export interface GameEvent {
   x?: number
   points?: number
   text?: string
-  impact?: 'rock' | 'debris' | 'shark'
+  impact?: 'rock' | 'pier' | 'debris' | 'shark'
+  impactDetails?: { z: number; damage: number; speed: number; shark?: BoatSharkKind }
   heavySplash?: boolean
   // Z is in world coordinates, like the existing X coordinate.
   boatSplash?: { z: number; shark: BoatSharkKind; stage: 'breach' | 'reentry' }

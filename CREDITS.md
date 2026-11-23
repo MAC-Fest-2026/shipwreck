@@ -19,7 +19,7 @@
 - **Author** GRIP420
 - **Source** [Sketchfab](https://skfb.ly/67ZY7)
 - **License** [CC BY 4.0](http://creativecommons.org/licenses/by/4.0/)
-- **Changes** Re-centered and re-scaled the model, relinked textures, and separated the rotors for animation.
+- **Changes** Re-centered and re-scaled the model, optimized the mesh and textures, and adapted the original rotor animation for continuous playback.
 
 ## Realistic Animated Great White Shark
 
@@ -33,7 +33,7 @@
 - **Author** paulsnijdercompany
 - **Source** [CGTrader](https://www.cgtrader.com/free-3d-models/exterior/landscape/mossy-stone-set)
 - **License** [CGTrader Royalty Free License (No AI)](https://www.cgtrader.com/pages/terms-and-conditions)
-- **Changes** None documented.
+- **Changes** Centered 24 rock variants, resized textures, exported a compressed GLB, and placed the variants as instanced reefs and shoreline rocks.
 
 ## Rescue vessel
 
@@ -52,6 +52,9 @@
 
 Island model from BlenderKit (asset ID f1dde71a-9b17-445c-9145-ffa13844573b).
 
+- **Author** EB Adventure Photoscans
+- **Source** [Island Landscape Terrain 2](https://www.blendkit.com/asset-gallery-detail/f1dde71a-9b17-445c-9145-ffa13844573b/)
+- **License** [Blendkit Royalty Free](https://www.blendkit.com/docs/licenses/)
 - **Changes** Removed the built-in water, centered the terrain at sea level, reduced the mesh and textures, and exported with Draco compression.
 
 ## Character dialogue
@@ -76,17 +79,28 @@ Island model from BlenderKit (asset ID f1dde71a-9b17-445c-9145-ffa13844573b).
 
 ## Survivor character models
 
-| In-game character | Original asset | Creator credited in the download |
-|---|---|---|
-| Mara Voss, First Officer | Business Girl | [giyas3dartist](https://www.cgtrader.com/designers/giyas3dartist) |
-| Priya Nair, ER Nurse | Megane | [martinthedark-](https://www.cgtrader.com/designers/martinthedark-) |
-| Ana Kapoor, Honeymooner | Female Office Worker | [cpookongploy](https://www.cgtrader.com/designers/cpookongploy) |
-| Elias Rook, Engineer | Norm European Worker | [adam127](https://www.cgtrader.com/designers/adam127) |
-| Tommy Ricci, Ship's Cook | Busy Man | [adam127](https://www.cgtrader.com/designers/adam127) |
-| Dev Kapoor, Honeymooner | Matt | [martinthedark-](https://www.cgtrader.com/designers/martinthedark-) |
-| Hollis Brandt, Retired Fisherman | Military Survivalist | [Slayver](https://www.cgtrader.com/designers/slayver) |
-| Jay Okafor, Student Deckhand | Renderpeople Manuel, animated dancing | [Renderpeople](https://www.cgtrader.com/designers/renderpeople) |
+The creator links come from the original download credits. Item sources and listing licenses are included where the listing could be matched to the downloaded model.
 
-**Changes** Adapted the rigs and materials for the game, centered and optimized the models for GLB delivery, and replaced source animation playback with procedural rescue motion. Selected the civilian clothing variant for Hollis.
+| In-game character | Original asset | Creator credit | Item source and listing license |
+|---|---|---|---|
+| Mara Voss, First Officer | Business Girl | [giyas3dartist](https://www.cgtrader.com/designers/giyas3dartist?utm_source=credit&utm_source=credit_item_page) | Creator link supplied with the download |
+| Priya Nair, ER Nurse | Megane Free High-Poly 3D model | [martinthedark-](https://www.cgtrader.com/designers/martinthedark-?utm_source=credit&utm_source=credit_item_page) | Editorial License (no AI). [CGTrader listing](https://www.cgtrader.com/free-3d-models/character/woman/megane-free-high-poly-3d-model) |
+| Ana Kapoor, Honeymooner | Female Office Worker | [cpookongploy](https://www.cgtrader.com/designers/cpookongploy?utm_source=credit&utm_source=credit_item_page) | Creator link supplied with the download |
+| Elias Rook, Engineer | Norm European Worker | [adam127](https://www.cgtrader.com/designers/adam127?utm_source=credit&utm_source=credit_item_page) | Creator link supplied with the download |
+| Tommy Ricci, Ship's Cook | Busy Man | [adam127](https://www.cgtrader.com/designers/adam127?utm_source=credit&utm_source=credit_item_page) | Creator link supplied with the download |
+| Dev Kapoor, Honeymooner | Matt Free High-Poly 3D model | [martinthedark-](https://www.cgtrader.com/designers/martinthedark-?utm_source=credit&utm_source=credit_item_page) | Editorial License (no AI). [CGTrader listing](https://www.cgtrader.com/free-3d-models/character/man/matt-free-high-poly-3d-model) |
+| Hollis Brandt, Retired Fisherman | Survivalist | [Slayver](https://www.cgtrader.com/designers/slayver?utm_source=credit&utm_source=credit_item_page) | Royalty Free License (no AI). [CGTrader listing](https://www.cgtrader.com/free-3d-models/character/man/survivalist-f5c207a4-36d6-49d1-9ec8-c19d2ab562a4) |
+| Jay Okafor, Student Deckhand | Manuel 001 Animated Dancing Man | [Renderpeople](https://www.cgtrader.com/designers/renderpeople?utm_source=credit&utm_source=credit_item_page) | Royalty Free License (no AI). [CGTrader listing](https://www.cgtrader.com/free-3d-models/character/man/manuel-001-animated-dancing-man) |
 
-**CGTrader usage note** The CGTrader assets may be incorporated into the finished game with safeguards against access to the model data. Their licenses prohibit sharing the raw model files with others. [CGTrader license terms](https://www.cgtrader.com/pages/terms-and-conditions)
+**Changes** Adapted the rigs and materials for GLB delivery, added fitted life jackets in the game, and replaced source animation playback with procedural rescue motion. Selected the civilian clothing variant for Hollis.
+
+**CGTrader usage note** Game use and distribution depend on each asset's license and any permissions from its rights holder. The standard Royalty Free terms require safeguards against access to the model data and restrict sharing the downloaded files. [CGTrader license terms](https://www.cgtrader.com/pages/terms-and-conditions)
+
+## Sound effects
+
+| Runtime file | Recording | Author | License | Changes and source |
+|---|---|---|---|---|
+| `public/audio/water-splash.wav` | Big Water Splash | qubodup | [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) | Mixed at different gains and pitches for the rescue slam, shark lunges, and collision spray. [Freesound](https://freesound.org/people/qubodup/sounds/442773/) |
+| `public/audio/boat-rock-hit.wav` | boat knocks fiberglass on water.flac | kyles | [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) | Converted to WAV. Plays a single take with speed- and damage-based gain and pitch. [Freesound](https://freesound.org/people/kyles/sounds/637207/) |
+| `public/audio/boat-engine.wav` | outboard motor boat onboard high speed.flac | kyles | [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) | Converted to WAV and crossfaded for looping. Gain and pitch follow the boat's throttle and speed. [Freesound](https://freesound.org/people/kyles/sounds/637744/) |
+| `public/audio/helicopter-engine.wav` | helicopterRaw_30sec.wav | lorenzosu | [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/) | Crossfaded for looping, leveled in Web Audio, and faded during the handoff to the boat. [Freesound](https://freesound.org/people/lorenzosu/sounds/49483/) |

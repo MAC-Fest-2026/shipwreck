@@ -24,15 +24,30 @@ async function offlineScore(page: Page, runId: string) {
 }
 
 test('keyboard onboarding, rescue HUD and pause', async ({ page }) => {
+  test.setTimeout(60000)
   const errors: string[] = []
   page.on('pageerror', error => errors.push(error.message))
-  await page.goto('/')
-  await expect(page.getByRole('heading', { name: 'SHIPWRECK', exact: true })).toBeVisible()
-  await page.getByRole('button', { name: /Keyboard & mouse/ }).click()
-  await page.getByRole('button', { name: /MAVERICK/ }).click()
-  await expect(page.getByRole('heading', { name: 'Flight briefing' })).toBeVisible()
-  await page.getByRole('button', { name: /Flight school/ }).click()
-  await expect(page.getByRole('button', { name: 'Skip tutorial' })).toBeVisible()
+  let releaseWreck!: () => void
+  const wreckGate = new Promise<void>(resolve => { releaseWreck = resolve })
+  await page.route('**/models/cruise_ship_wreck.glb', async route => {
+    await wreckGate
+    await route.continue()
+  })
+  const preloading = page.waitForRequest('**/models/cruise_ship_wreck.glb')
+  try {
+    await page.goto('/')
+    await expect(page.getByRole('heading', { name: 'SHIPWRECK', exact: true })).toBeVisible()
+    await preloading
+    await page.getByRole('button', { name: /Keyboard & mouse/ }).click()
+    await page.getByRole('button', { name: /MAVERICK/ }).click()
+    await expect(page.getByRole('heading', { name: 'Flight briefing' })).toBeVisible()
+    await page.getByRole('button', { name: /Flight school/ }).click()
+    await expect(page.getByRole('status').filter({ hasText: 'Loading 3D assets' })).toBeVisible()
+    await expect(page.locator('#stage')).toBeHidden()
+  } finally {
+    releaseWreck()
+  }
+  await expect(page.getByRole('button', { name: 'Skip tutorial' })).toBeVisible({ timeout: 20000 })
   await page.getByRole('button', { name: 'Skip tutorial' }).click()
   await page.getByRole('button', { name: /Skip/ }).click()
   await page.getByRole('button', { name: /Skip/ }).click()
@@ -83,7 +98,10 @@ test('full replay repeats score and saves a durable record', async ({ page }) =>
 test('bundled camera inference initializes with Chromium fake media', async ({ page }) => {
   test.setTimeout(60000)
   const requests = new Set<string>()
-  page.on('request', request => requests.add(new URL(request.url()).host))
+  page.on('request', request => {
+    const url = new URL(request.url())
+    if (url.protocol === 'http:' || url.protocol === 'https:') requests.add(url.host)
+  })
   await page.goto('/?debug=1')
   await page.getByRole('button', { name: /Play with hands/ }).click()
   await expect(page.getByText(/Webcam ready · (GPU|CPU) tracking/)).toBeVisible({ timeout: 45000 })

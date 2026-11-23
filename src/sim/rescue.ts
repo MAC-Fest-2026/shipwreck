@@ -1,5 +1,5 @@
 import { tuning } from '../app/tuning'
-import { approach, clamp, lerp, seededRandom } from '../core/math'
+import { approach, clamp, damp, lerp, seededRandom } from '../core/math'
 import type { ControlIntent } from '../input/intent'
 import type { Emit } from '../game/events'
 import { waveHeight } from './water'
@@ -50,7 +50,7 @@ export class Rescue {
   threat = 0
   x = -12
   velocity = 0
-  bank = 0
+  acceleration = 0
   cable = 8.28
   swing = 0
   private swingVelocity = 0
@@ -125,10 +125,12 @@ export class Rescue {
       const near = this.survivors.find(s => (s.state === 'debris' || s.state === 'floating') && Math.abs(target - s.x) < 2.3)
       if (near) target = lerp(target, near.x, 0.33)
     }
-    const acceleration = R.spring ** 2 * (target - this.x) - 2 * R.damping * R.spring * this.velocity
+    const previousVelocity = this.velocity
+    const acceleration = R.spring ** 2 * (target - this.x)
+      - (2 * R.damping * R.spring + 0.18) * this.velocity
     this.velocity = clamp(this.velocity + acceleration * step, -R.speed, R.speed)
     this.x = clamp(this.x + this.velocity * step, -R.span, R.span)
-    this.bank = approach(this.bank, clamp(-acceleration * 0.028, -0.244, 0.244), step * 1.2)
+    this.acceleration = damp(this.acceleration, clamp((this.velocity - previousVelocity) / step, -20, 20), 4.8, step)
     const targetCable = lerp(R.cableMin, R.cableMax, intent.winchTarget)
     const previousCable = this.cable
     this.cable = approach(this.cable, targetCable, step * (targetCable > this.cable ? R.extend : R.retract))

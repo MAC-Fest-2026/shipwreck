@@ -182,16 +182,20 @@ function Briefing({ c }: { c: Controller }) {
       <article>
         <p class="kicker mono">02 / ISLAND RUN</p><h3>Follow the light.</h3>
         <dl><dt>Steer</dt><dd>{hand ? 'Tilt your palms like a wheel' : 'A / D'}</dd>
-          <dt>Throttle</dt><dd>{hand ? 'Raise / lower both palms' : 'W / S'}</dd>
+          <dt>Throttle</dt><dd>{hand ? 'Raise / lower both palms' : c.settings.boatThrottle === 'hold' ? 'Hold W / brake with S' : 'W / S'}</dd>
           <dt>Pause</dt><dd>{hand ? 'Hold both thumbs up' : 'Esc'}</dd></dl>
         <p>Turn away from shark wakes. Lower throttle on approach and aim between the channel lights.</p>
       </article>
     </div>
     {c.status && <p role="status" class="status">{c.status}</p>}
     <div class="actions">
-      <Button variant="primary" disabled={c.status === 'Loading rescue scene…'} action={() => void c.launch(true)}>Flight school <span>→</span></Button>
-      <Button disabled={c.status === 'Loading rescue scene…'} action={() => void c.launch(false)}>Start mission <span>→</span></Button>
-      <Button variant="quiet" action={() => c.back()}>Back</Button>
+      <Button variant="primary" disabled={!!c.loadingStart} action={() => void c.launch(true)}>
+        {c.loadingStart === 'school' ? <span role="status">Loading 3D assets…</span> : <>Flight school <span>→</span></>}
+      </Button>
+      <Button disabled={!!c.loadingStart} action={() => void c.launch(false)}>
+        {c.loadingStart === 'mission' ? <span role="status">Loading 3D assets…</span> : <>Start mission <span>→</span></>}
+      </Button>
+      <Button variant="quiet" disabled={!!c.loadingStart} action={() => c.back()}>Back</Button>
     </div>
   </section>
 }
@@ -231,6 +235,12 @@ function UserSettings({ c }: { c: Controller }) {
         </div></div>
       </div>
       <div class="settings-block"><h3>Display &amp; controls</h3>
+        <div class="setting-row"><span>Boat Throttle <small>· keyboard</small></span>
+          <Button label={`Boat Throttle, ${c.settings.boatThrottle === 'hold' ? 'Hold to Accelerate' : 'Cruise Throttle (Sticky)'}`}
+            action={() => c.changeSetting('boatThrottle', c.settings.boatThrottle === 'hold' ? 'sticky' : 'hold')}>
+            {c.settings.boatThrottle === 'hold' ? 'Hold to Accelerate' : 'Cruise Throttle (Sticky)'}
+          </Button>
+        </div>
         <div class="setting-row"><span>Wave Intensity</span><div class="stepper" role="group" aria-label="Wave Intensity">
           <Button variant="letter-button" label="Lower wave intensity" disabled={c.settings.waveIntensity <= waveIntensity.min}
             action={() => adjustWaves(-1)}>−</Button>

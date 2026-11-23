@@ -270,15 +270,17 @@ export class HelicopterModel {
     this.posed = false
   }
 
-  pose(velocity: number, bank: number, dt: number, reduced: boolean) {
+  pose(velocity: number, acceleration: number, dt: number, reduced: boolean) {
     if (Math.abs(velocity) > 0.8) this.facingRight = velocity > 0
     // The model faces -X. Hovers retain the last heading, and turns pass through +Z.
     const heading = this.facingRight ? Math.PI : 0
-    const yaw = this.posed ? damp(this.root.rotation.y, heading, 9, dt) : heading
-    const roll = reduced ? 0 : clamp((heading - yaw) * 0.060 + velocity * 0.005, -0.19, 0.19)
-    const forwardTilt = reduced ? bank * 0.65 : clamp(bank - velocity * 0.009, -0.31, 0.31)
-    const pitch = this.posed ? damp(this.root.rotation.z, forwardTilt, 10, dt) : forwardTilt
-    // Apply the simulation's bank in the world travel plane, even while the model is turning.
+    const yaw = this.posed ? damp(this.root.rotation.y, heading, 6.8, dt) : heading
+    const banking = reduced ? 0 : clamp((heading - yaw) * 0.085 + acceleration * 0.0045 + velocity * 0.0025, -0.23, 0.23)
+    const flare = velocity * acceleration < 0 ? 0.017 : 0.012
+    const forwardTilt = clamp(-velocity * 0.009 - acceleration * flare, -0.30, 0.30) * (reduced ? 0.48 : 1)
+    const roll = this.posed ? damp(this.root.rotation.x, banking, 6.5, dt) : banking
+    const pitch = this.posed ? damp(this.root.rotation.z, forwardTilt, 7.5, dt) : forwardTilt
+    // Z tilts the nose in the world travel plane as the aircraft swings through a turn.
     this.root.rotation.set(roll, yaw, pitch, 'ZYX')
     this.posed = true
   }

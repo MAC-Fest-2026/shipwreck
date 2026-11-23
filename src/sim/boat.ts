@@ -347,11 +347,14 @@ export interface BoatLunge {
   courseZ: number; side: -1 | 1; time: number; ended: boolean
   x: number; targetZ: number; vx: number; vz: number
   curve?: LungeCurve
+  retryAt?: number
+  retreatAt?: number
 }
 
 export const boatLungeTiming = {
   rise: 1.62, breach: 2.02, bite: 2.55, apex: 2.7, strike: 3.1, clear: 3.65, splashdown: 3.81, end: 5,
 } as const
+export const sharkChaseEnd = coastStart - 60
 export const boatSharkLength = 21.39
 export const regularSharkLength = 6.2
 const sharkLunge = {
@@ -402,12 +405,16 @@ export function boatSharkPose(lunge: BoatLunge, time: number, visualLength = sha
   const offset = visualLength * 0.44
   const centerX = snout.x - forwardX * offset, centerZ = -snout.z - forwardZ * offset
   const dt = 0.01
+  const height = (delta: number) => {
+    const dive = lunge.retreatAt === undefined ? 0 : clamp(time + delta - lunge.retreatAt)
+    return breachHeight(lunge.shark, age + delta) - (lunge.shark === 'megalodon' ? 10 : 5) * dive ** 2
+  }
   const heightAt = (delta: number) => waveHeight(centerX + snout.vx * delta, centerZ - snout.vz * delta, time + delta)
-    + breachHeight(lunge.shark, age + delta)
+    + height(delta)
   const verticalSpeed = (heightAt(dt) - heightAt(-dt)) / (2 * dt)
   const pitch = clamp(-Math.atan2(verticalSpeed, speed), -0.5, 0.62)
   const x = snout.x - forwardX * offset * Math.cos(pitch), z = -snout.z - forwardZ * offset * Math.cos(pitch)
-  return { x, z, y: waveHeight(x, z, time) + breachHeight(lunge.shark, age),
+  return { x, z, y: waveHeight(x, z, time) + height(0),
     pitch, yaw: Math.atan2(forwardX, forwardZ), forwardX, forwardZ }
 }
 
@@ -495,12 +502,11 @@ export class Boat {
   readonly hazards: Hazard[] = []
   private readonly hazardReach: number
   private readonly bendSide: number
-  readonly lunges: BoatLunge[] = [
-    { shark: 'regularShark', courseZ: 132, side: -1, time: -1, ended: false, x: 0, targetZ: 0, vx: 0, vz: 0 },
-    { shark: 'regularShark', courseZ: 302, side: 1, time: -1, ended: false, x: 0, targetZ: 0, vx: 0, vz: 0 },
-    { shark: 'megalodon', courseZ: 455, side: -1, time: -1, ended: false, x: 0, targetZ: 0, vx: 0, vz: 0 },
-    { shark: 'megalodon', courseZ: 689, side: 1, time: -1, ended: false, x: 0, targetZ: 0, vx: 0, vz: 0 },
-  ]
+  readonly lunges: BoatLunge[] = ([
+    [132, -1, 'regularShark'], [240, 1, 'regularShark'], [340, -1, 'megalodon'],
+    [455, 1, 'regularShark'], [550, -1, 'megalodon'], [655, 1, 'regularShark'],
+    [756, -1, 'regularShark'], [854, 1, 'megalodon'],
+  ] as const).map(([courseZ, side, shark]) => ({ shark, courseZ, side, time: -1, ended: false, x: 0, targetZ: 0, vx: 0, vz: 0 }))
   x = 0
   z = 0
   heading = 0
@@ -516,6 +522,8 @@ export class Boat {
   smooth = false
   done: 'landed' | 'destroyed' | null = null
   private lastHazard = -100
+  private lastAttack = -Infinity
+  private lastPierContact = -Infinity
 
   constructor(seed: number, private readonly emit: Emit) {
     const rng = seededRandom(seed ^ 0x572913)
@@ -557,13 +565,13 @@ export class Boat {
     }
   }
 
-  tick(dt: number, intent: ControlIntent, assist: boolean) {
+  tick(dt: number, intent: ControlIntent, assist: boolean, holdToAccelerate = false) {
     if (this.done) return
     const previousTime = this.time
     this.time += dt
     const approachZone = this.z >= T.approach
     const throttle = clamp(intent.throttle)
-    const speedTarget = approachZone ? 2.4 + 13.6 * throttle : T.speed * Math.max(T.throttleFloor, throttle)
+    const speedTarget = approachZone || holdToAccelerate ? lerp(2.4, T.speed, throttle) : T.speed * Math.max(T.throttleFloor, throttle)
     const swell = this.z > 600 && this.z < 780 ? 0.82 + 0.18 * Math.cos(this.time * 1.15) : 1
     this.speed = approach(this.speed, speedTarget * swell, (approachZone ? 5.8 : T.accel) * dt)
     const headingAssist = assist ? clamp(-this.x * 0.024 - this.heading * 0.22, -0.15, 0.15) : 0
@@ -585,10 +593,14 @@ export class Boat {
       const distanceSq = dx * dx + dz * dz
       const contact = obstacle.type === 'reef' ? reefContact(obstacle, this.x, this.z) : distanceSq < (obstacle.radius + boatClearance) ** 2
       if (contact) {
+        const normalSpeed = this.speed * clamp((dx * Math.sin(this.heading) + dz * Math.cos(this.heading))
+          / Math.max(0.1, Math.sqrt(distanceSq)), 0.15, 1)
         obstacle.hit = true
         const deflected = this.x + (this.x >= obstacle.x ? 2.8 : -2.8)
         if (!harborContact(deflected, this.z, this.heading)) this.x = deflected
-        this.damage(obstacle.type === 'reef' ? 25 : 10, obstacle.x, obstacle.type === 'reef' ? 'rock' : 'debris')
+        const reef = obstacle.type === 'reef'
+        this.damage(reef ? Math.round(lerp(4, 25, clamp(normalSpeed / T.speed))) : 10,
+          obstacle.x, reef ? 'rock' : 'debris', normalSpeed)
       } else if (dz > 0 && distanceSq < warningRange ** 2 && this.time - this.lastHazard > 12) {
         this.lastHazard = this.time
         this.emit('BOAT_HAZARD', { x: obstacle.x, text: obstacle.type === 'reef' ? 'REEF AHEAD' : 'DEBRIS AHEAD' })
@@ -621,10 +633,11 @@ export class Boat {
     lunge.vz = -(-forwardX * lunge.side * flank + forwardZ * 14) / strike
     const approach = planBoatLunge(lunge, this.hazards, length)
     if (!approach) {
-      lunge.ended = true
+      lunge.retryAt = this.z + 10
       return
     }
     lunge.time = this.time
+    this.lastAttack = this.time
     lunge.curve = approach.curve
     const spawn = boatLungePosition(lunge, 0)
     lunge.side = (spawn.x - this.x) * forwardZ - (spawn.z - this.z) * forwardX < 0 ? -1 : 1
@@ -640,11 +653,21 @@ export class Boat {
 
   private updateLunges(previousTime: number, canSteer: boolean) {
     const { breach, bite, clear, splashdown, end } = boatLungeTiming
-    for (const lunge of this.lunges) {
-      if (lunge.time < 0) {
-        if (canSteer && !lunge.ended && this.z >= lunge.courseZ - 44) this.startLunge(lunge)
+    const docking = this.z >= sharkChaseEnd
+    for (const [index, lunge] of this.lunges.entries()) {
+      if (docking) {
+        if (lunge.time >= 0 && this.time - lunge.time < splashdown) lunge.retreatAt ??= this.time
+        lunge.ended = true
         continue
       }
+      if (lunge.time < 0) {
+        const next = this.lunges[index + 1]
+        if (next && this.z >= next.courseZ - 44) lunge.ended = true
+        if (canSteer && !lunge.ended && this.z >= (lunge.retryAt ?? lunge.courseZ - 44)
+          && this.time - this.lastAttack >= end) this.startLunge(lunge)
+        continue
+      }
+      if (lunge.retreatAt !== undefined) continue
       const previousAge = previousTime - lunge.time
       if (previousAge >= end) continue
       const age = this.time - lunge.time
@@ -657,7 +680,17 @@ export class Boat {
       if (!contact && age < clear) continue
       lunge.ended = true
       this.emit('LUNGE', { x: snout.x })
-      if (contact) this.damage(profile.damage, snout.x, 'shark')
+      if (contact) {
+        // Project the closest point of the remaining pass so a brush at the edge
+        // of the hit radius deals less damage than a direct strike.
+        const dx = snout.x - this.x, dz = snout.z - this.z
+        const vx = snout.vx - Math.sin(this.heading) * this.speed
+        const vz = snout.vz - Math.cos(this.heading) * this.speed
+        const remaining = clamp(-(dx * vx + dz * vz) / Math.max(0.01, vx ** 2 + vz ** 2), 0, clear - age)
+        const miss = Math.hypot(dx + vx * remaining, dz + vz * remaining)
+        const damage = Math.round(profile.damage * lerp(0.25, 1, clamp(1 - miss / profile.hitRadius)))
+        this.damage(damage, snout.x, 'shark', this.speed, lunge.shark)
+      }
     }
   }
 
@@ -678,12 +711,15 @@ export class Boat {
       const slides = Math.abs(x - this.x) > z - this.z ? [[x, this.z], [this.x, z]] : [[this.x, z], [x, this.z]]
       const slide = slides.find(([sx, sz]) => (sx !== this.x || sz !== this.z) && !harborContact(sx, sz, turn))
       if (slide) {
+        const blockedTravel = Math.hypot(x - slide[0], z - slide[1])
+        this.pierImpact(x, z, dt > 0 ? blockedTravel / dt : 0)
         this.x = slide[0]
         this.z = slide[1]
         this.speed *= Math.exp(-3.4 * dt)
         return
       }
     }
+    this.pierImpact(x, z, this.speed)
     // Recoil slightly from a head-on stop so the bow has room to swing away.
     const backX = clamp(this.x - 0.32 * Math.sin(this.heading), -39, 39)
     const backZ = this.z - 0.32 * Math.cos(this.heading)
@@ -695,13 +731,20 @@ export class Boat {
     this.speed = 0
   }
 
-  private damage(amount: number, x: number, impact: NonNullable<GameEvent['impact']>) {
+  private pierImpact(x: number, z: number, speed: number) {
+    if (speed <= 1 || this.time - this.lastPierContact < 0.75) return
+    this.lastPierContact = this.time
+    this.emit('BOAT_COLLISION', { x, impact: 'pier', impactDetails: { z: -z, damage: 0, speed } })
+  }
+
+  private damage(amount: number, x: number, impact: NonNullable<GameEvent['impact']>, speed: number, shark?: BoatSharkKind) {
     if (this.done) return
+    const before = this.hull
     this.hull = Math.max(0, this.hull - amount)
     this.collisions++
     this.lastImpact = this.time
     this.speed *= 0.73
-    this.emit('BOAT_COLLISION', { x, text: 'HULL IMPACT', impact })
+    this.emit('BOAT_COLLISION', { x, text: 'HULL IMPACT', impact, impactDetails: { z: -this.z, damage: before - this.hull, speed, shark } })
     if (this.hull === 0) this.done = 'destroyed'
   }
 }

@@ -41,6 +41,7 @@ export class Controller {
   cameraNote = ''
   leaderBack: Screen = 'title'
   status = ''
+  loadingStart: 'school' | 'mission' | null = null
   calibrating = new Calibrator()
   calibration = loadCalibration()
   settingsReturn: Screen = 'title'
@@ -69,6 +70,8 @@ export class Controller {
   now = performance.now()
   private cameraRequest: AbortController | null = null
   private renderer: GameRenderer | null = null
+  private assetLoad: Promise<boolean> | null = null
+  private assetsReady = false
   private rendering = false
   private frame = 0
   private previous = 0
@@ -130,7 +133,9 @@ export class Controller {
     const dt = clamp((ms - (this.previous || ms)) / 1000, 0, 0.2)
     this.previous = ms
     if (this.emulator.enabled && this.mode === 'hands') this.hands.ingest(this.emulator.sample(), ms)
-    const input = this.mode === 'hands' ? this.hands.poll(ms) : this.fallback.poll(ms)
+    const throttleMode = this.game?.phase === 'boat' ? this.settings.boatThrottle : undefined
+    const input = this.mode === 'hands' ? this.hands.poll(ms)
+      : this.fallback.poll(ms, throttleMode, this.screen === 'game' && !this.overlay)
     this.handleTracking(input, dt)
     this.handleGestures(input)
     this.positionCamera()
@@ -289,27 +294,36 @@ export class Controller {
     this.dirty = true
   }
 
+  preloadAssets() {
+    this.assetLoad ??= import('../render/renderer').then(async ({ GameRenderer }) => {
+      this.renderer = new GameRenderer(this.stage, lost => {
+        if (lost && this.screen === 'game') {
+          this.overlay = 'graphics'
+          if (this.game) this.game.paused = true
+        } else if (!lost && this.screen === 'game') this.pause()
+        this.dirty = true
+      })
+      await this.renderer.ready
+      const preview = new Session(tuning.seed, '', 'replay', this.settings, false, () => {})
+      await this.renderer.warmup(preview, this.settings)
+      this.assetsReady = true
+      return true
+    }).catch(() => false)
+    return this.assetLoad
+  }
+
   async launch(school: boolean, mode = this.mode, fast = false) {
     if (this.rendering || this.renderer?.lost) return
     this.radio.unlock()
     this.rendering = true
-    this.status = 'Loading rescue scene…'
+    this.loadingStart = this.assetsReady ? null : school ? 'school' : 'mission'
+    this.status = ''
     this.dirty = true
+    const origin = this.screen
     try {
-      if (!this.renderer) {
-        const { GameRenderer } = await import('../render/renderer')
-        try {
-          this.renderer = new GameRenderer(this.stage, lost => {
-            if (lost) {
-              this.overlay = 'graphics'
-              if (this.game) this.game.paused = true
-            } else if (this.screen === 'game') this.pause()
-            this.dirty = true
-          })
-        } catch (error) {
-          if (!fast) throw error
-        }
-      }
+      const ready = await this.preloadAssets()
+      if (this.screen !== origin) return
+      if (!ready && !fast) throw new Error('Renderer unavailable')
       this.radio.reset()
       this.overlay = null
       this.saving = 'idle'
@@ -321,11 +335,13 @@ export class Controller {
       this.replayFast = fast
       this.replay = mode === 'replay' ? new ReplayIntentProvider(() => pilotBot(this.game!)) : null
       this.status = ''
+      if (ready && !fast) this.renderer?.draw(this.game, 0, this.settings, this.now / 1000)
       this.go('game')
     } catch {
       this.status = 'WebGL2 could not start. Open in Chromium with hardware acceleration enabled.'
     } finally {
       this.rendering = false
+      this.loadingStart = null
       this.dirty = true
     }
   }

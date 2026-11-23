@@ -1,6 +1,6 @@
 # SHIPWRECK
 
-SHIPWRECK is a desktop browser game. Fly a helicopter, winch survivors onto a rescue boat, then drive the boat to an island in first person. The game uses TypeScript, Three.js/WebGL2, Preact, and MediaPipe. Scores are stored in the browser.
+SHIPWRECK is a desktop browser game. Fly a helicopter, winch rigged survivors onto a rescue boat, then steer through reefs and shark attacks to moor at an island. It uses TypeScript, Three.js/WebGL2, Preact, and MediaPipe. Scores and settings live in the browser.
 
 If the docs and the code disagree, the code wins. `docs/SHIPWRECK.md` is the original plan. Check the current implementation before relying on it.
 
@@ -20,7 +20,8 @@ Open the URL Vite prints, usually `http://127.0.0.1:5173/`, in desktop Chrome or
 Choose a mode on the title screen, then select a callsign and open **Flight school** or **Start mission**.
 
 - **Play with hands** uses the webcam and calibration. Move the right palm sideways to fly. Move the left palm up or down to operate the winch and close or open the hand to grab or release. Tilt both palms to steer the boat and raise or lower them together for throttle.
-- **Keyboard & mouse** uses mouse movement or the arrow keys for flight and winch. Hold or release `F` or the left mouse button for the claw. Use `A`/`D` to steer the boat and `W`/`S` for throttle.
+- **Keyboard & mouse** uses the mouse or arrow keys for flight and winch, and `F` or left mouse for the claw. Use `A`/`D` to steer and `W`/`S` for throttle.
+- Settings persist **Wave Intensity** for visual swell and buoyancy and **Boat Throttle** for keyboard input. **Hold to Accelerate** is the default. **Cruise Throttle (Sticky)** holds the last throttle. Hands use palm height in either setting.
 
 ## Folder map
 
@@ -32,9 +33,11 @@ Choose a mode on the title screen, then select a callsign and open **Flight scho
 - `src/ui/`, `src/audio/`, and `src/persistence/` contain the interface, radio/audio, and local scores.
 - `public/` contains runtime assets. `docs/`, `scripts/`, and `tests/` contain project notes, tools, and tests.
 
-## 3D models
+## Runtime assets
 
-Put `.glb` files under `public/models/`. The loader in `src/render/renderer.ts` currently names `sar-helicopter.glb` and `rescue-vessel.glb`. Wire new files into the renderer to use them in the game. Other scene geometry is built in `src/render/models.ts`.
+- `src/main.tsx` starts eager GLB loading and renderer warm-up behind the title. The loader uses the local decoders in `public/decoders/`.
+- `public/models/` contains the helicopter, rescue vessel, cruise wreck, island, lighthouse, reefs, shark, Megalodon, and eight survivors. The roster in `src/sim/rescue.ts` maps to `mara-voss.glb`, `priya-nair.glb`, `ana-kapoor.glb`, `elias-rook.glb`, `tommy-ricci.glb`, `dev-kapoor.glb`, `hollis-brandt.glb`, and `jay-okafor.glb`.
+- `public/audio/` has Kokoro dialogue, WAV fallbacks, and `helicopter-engine.wav`, `boat-engine.wav`, `boat-rock-hit.wav`, and `water-splash.wav`. Overrides use `.mp3`, `.wav`, then `.ogg`. Keep sources and license terms in `CREDITS.md`.
 
 ## Project rules
 

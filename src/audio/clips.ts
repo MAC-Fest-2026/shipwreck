@@ -1,3 +1,5 @@
+import bundledFiles from 'virtual:shipwreck-audio'
+
 const base = import.meta.env.BASE_URL
 
 export type DialogueEmotion = 'steady' | 'hope' | 'urgent' | 'panic' | 'relief' | 'grief'
@@ -20,21 +22,34 @@ export function dialogueDelivery(emotion: DialogueEmotion = 'steady', overRadio 
 export class AudioClips {
   private readonly files = new Map<string, Promise<AudioBuffer | null>>()
   private readonly overrides = new Map<string, Promise<AudioBuffer | null>>()
+  private readonly decoded = new Map<string, AudioBuffer>()
+  private readonly inventory = import.meta.env.DEV
+    ? fetch('/__shipwreck_audio').then(response => response.json() as Promise<string[]>)
+      .then(files => new Set(files)).catch(() => new Set(bundledFiles))
+    : Promise.resolve(new Set(bundledFiles))
 
   constructor(private readonly context: AudioContext) {}
 
   override(slug: string) {
     let clip = this.overrides.get(slug)
     if (!clip) {
-      clip = this.loadOverride(slug)
+      clip = this.loadOverride(slug).then(buffer => {
+        if (buffer) this.decoded.set(slug, buffer)
+        return buffer
+      })
       this.overrides.set(slug, clip)
     }
     return clip
   }
 
+  readyOverride(slug: string) { return this.decoded.get(slug) }
+
   private async loadOverride(slug: string) {
-    for (const extension of ['mp3', 'ogg', 'wav']) {
-      const buffer = await this.load('audio/' + slug + '.' + extension)
+    const files = await this.inventory
+    for (const extension of ['mp3', 'wav', 'ogg']) {
+      const name = slug + '.' + extension
+      if (!files.has(name)) continue
+      const buffer = await this.load('audio/' + name)
       if (buffer) return buffer
     }
     return null

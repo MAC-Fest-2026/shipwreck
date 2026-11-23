@@ -399,6 +399,8 @@ export class GameRenderer {
   get fps() { return Math.round(1000 / Math.max(1, this.averageMs)) }
   get stats() { return { fps: this.fps, calls: this.renderer.info.render.calls, triangles: this.renderer.info.render.triangles, scale: this.scale } }
 
+  readonly ready: Promise<void>
+
   constructor(container: HTMLElement, onContext: (lost: boolean) => void) {
     this.modelSizes = {
       rescueVessel: fitModelScale('rescueVessel', this.rescueBoat),
@@ -452,7 +454,7 @@ export class GameRenderer {
     this.composer.addPass(new EffectPass(this.camera, new BloomEffect({ intensity: 0.36, luminanceThreshold: 0.55, mipmapBlur: true }),
       new VignetteEffect({ offset: 0.22, darkness: 0.32 })))
     this.resize()
-    void this.loadModels()
+    this.ready = this.loadModels()
     addEventListener('resize', () => this.resize())
   }
 
@@ -467,12 +469,11 @@ export class GameRenderer {
       return { name: 'ShipwreckModelTextures' }
     })
     const meshoptUrl = new URL('meshopt_decoder.module.js', decoders).href
-    const meshopt: typeof import('three/addons/libs/meshopt_decoder.module.js') | null =
-      await import(/* @vite-ignore */ meshoptUrl).catch((error: unknown) => {
-        console.warn('[models] Meshopt decoder could not load.', error)
-        return null
-      })
-    if (meshopt) loader.setMeshoptDecoder(meshopt.MeshoptDecoder)
+    try {
+      const meshopt: typeof import('three/addons/libs/meshopt_decoder.module.js') = await import(/* @vite-ignore */ meshoptUrl)
+      await meshopt.MeshoptDecoder.ready
+      loader.setMeshoptDecoder(meshopt.MeshoptDecoder)
+    } catch (error) { console.warn('[models] Meshopt decoder could not load.', error) }
 
     const path = base + 'models/'
     const sharkAssets = [
@@ -533,7 +534,7 @@ export class GameRenderer {
         const deckMarks = this.rescueBoat.getObjectByName('RescueDeckMarks')
         this.rescueBoat.clear().add(scene, this.deckPassengers, rescueDeckTrim())
         if (deckMarks) this.rescueBoat.add(deckMarks)
-      }),
+      }).catch((error: unknown) => console.warn('[models] Could not load rescue-vessel.glb.', error)),
     ])
     draco.dispose()
 
@@ -542,6 +543,18 @@ export class GameRenderer {
       if (!size) continue
       const { length, width, height, scale } = size
       console.info(`[models] ${MODEL_SCALES[name].label} length=${length.toFixed(2)} width=${width.toFixed(2)} height=${height.toFixed(2)} scale=${scale.toFixed(4)}`)
+    }
+  }
+
+  async warmup(preview: Session, settings: RenderSettings) {
+    // Exercise phase-specific visibility, instancing and the selected postprocess path
+    // while its canvas is hidden behind the title.
+    preview.boat.z = 790
+    for (const phase of ['intro', 'rescue', 'boat', 'outro', 'school'] as const) {
+      preview.phase = phase
+      preview.elapsed = phase === 'intro' ? 9 : 0
+      this.draw(preview, 0, settings, 1)
+      await this.renderer.compileAsync(this.scene, this.camera)
     }
   }
 
@@ -798,11 +811,13 @@ export class GameRenderer {
     this.ship.visible = !practice && this.ship.children.length > 0
     this.helo.root.visible = !inIntro
     const approachTime = 8 - run.elapsed
+    const hover = 1 - clamp(Math.abs(r.velocity) / R.speed) * 0.55
+    const rotorBob = (0.09 * Math.sin(t * 2.4) + 0.036 * Math.sin(t * 4.7 + 0.8)) * hover
     this.helo.root.position.set(inArrival ? r.x - approachTime ** 2 * 1.15 : r.x,
-      r.altitude + (reduced ? 0 : 0.13 * Math.sin(t * 2.4)), rescuePlaneZ)
+      r.altitude + (reduced ? 0 : rotorBob), rescuePlaneZ)
     if (this.helo.root.visible) {
       this.helo.pose(inArrival ? approachTime * 2.3 : departure ? 0 : r.velocity,
-        inArrival ? 0.065 * clamp(approachTime) : departure ? 0 : r.bank, dt, reduced)
+        inArrival ? -2.3 : departure ? 0 : r.acceleration, dt, reduced)
     }
     const carriers = r.carried
     const pairedLift = carriers.length > 1
@@ -948,7 +963,7 @@ export class GameRenderer {
       const visible = this.rescueGroup.children
       visible.forEach(item => { item.visible = item === this.rescueBoat || item === this.helo.root || this.people.some(p => p.root === item) })
       this.helo.root.position.set(-8 - path * 40, 20 + path * 5, -929 - path * 13)
-      this.helo.pose(-37 / 12, -0.054, dt, reduced)
+      this.helo.pose(-37 / 12, 0, dt, reduced)
       const port = this.vesselHelm ? 2.65 : 1.48
       const aboardX = helmX + port
       const ashoreX = harbor.pier.minX + 0.66
@@ -999,7 +1014,8 @@ export class GameRenderer {
       if (model.visible) model.position.y = waveHeight(h.x, -h.z, t)
     }
     for (const lunge of b.lunges) {
-      if (lunge.time >= 0 && t - lunge.time < boatLungeTiming.end) this.drawBoatShark(lunge, t)
+      if (lunge.time >= 0 && t - lunge.time < boatLungeTiming.end
+        && (lunge.retreatAt === undefined || t - lunge.retreatAt < 1)) this.drawBoatShark(lunge, t)
     }
     return 61
   }
@@ -1015,12 +1031,13 @@ export class GameRenderer {
     shark.root.position.set(pose.x, pose.y, pose.z)
     shark.root.rotation.set(pose.pitch, pose.yaw, 0, 'YXZ')
     shark.swimSpeed = (meg ? 1.55 : 2.1) + 0.65 * smoothstep(age, 0.4, bite)
-    if (age >= bite && age <= clear && !this.animatedAttacks.has(lunge)
+    if (lunge.retreatAt === undefined && age >= bite && age <= clear && !this.animatedAttacks.has(lunge)
       && shark.bite(meg ? 0 : variant, meg ? 1.75 : 2.7)) this.animatedAttacks.add(lunge)
     if (age < breach) {
       this.env.uniforms.sharkWakePose.value.set(pose.x, pose.z, pose.forwardX, pose.forwardZ)
       this.env.uniforms.sharkWakeSize.value.set(meg ? 24 : 11, meg ? 1.2 : 0.66,
-        smoothstep(age, 0, 0.18) * (1 - smoothstep(age, rise, breach)))
+        smoothstep(age, 0, 0.18) * (1 - smoothstep(age, rise, breach))
+          * (lunge.retreatAt === undefined ? 1 : 1 - smoothstep(time - lunge.retreatAt, 0, 0.7)))
     }
   }
 
@@ -1031,6 +1048,12 @@ export class GameRenderer {
       const event = run.events[i]
       const age = Math.max(0, now - event.t / 1000)
       if (age >= boatSplashDuration) break
+      if (event.impactDetails && (event.impact === 'rock' || event.impact === 'pier') && event.x !== undefined) {
+        const { z, speed, damage } = event.impactDetails
+        const strength = 0.35 + 0.9 * clamp(speed / tuning.boat.speed * 0.75 + damage / 50)
+        this.boatSplashes[slot++].update(event.x, z, time, age, strength, reduced || this.quality === 'low')
+        continue
+      }
       if (event.type !== 'WATER_SPLASH' || !event.boatSplash || event.x === undefined) continue
       const { shark, stage, z } = event.boatSplash
       const strength = (shark === 'megalodon' ? 1.85 : 1) * (stage === 'reentry' ? 1.12 : 1)

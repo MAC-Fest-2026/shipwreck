@@ -1,5 +1,6 @@
 import { defineConfig } from 'vitest/config'
 import type { Plugin } from 'vite'
+import { localAudio } from './scripts/local-audio.mjs'
 
 function localVision(): Plugin {
   const endpoint = 'https://odml.pa.googleapis.com/v1/log'
@@ -21,7 +22,7 @@ function localVision(): Plugin {
 
 export default defineConfig({
   base: './',
-  plugins: [localVision()],
+  plugins: [localVision(), localAudio()],
   optimizeDeps: {
     exclude: ['@mediapipe/tasks-vision'],
     include: ['three', 'three/addons/utils/BufferGeometryUtils.js', 'three/addons/loaders/GLTFLoader.js',

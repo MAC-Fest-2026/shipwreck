@@ -1,12 +1,13 @@
 import { tuning } from '../app/tuning'
 import { neutralIntent, type ControlIntent } from '../input/intent'
+import type { BoatThrottle } from '../input/keyboard'
 import { Boat } from '../sim/boat'
 import { maxSurvivors, normalizeSurvivorCount, Rescue } from '../sim/rescue'
 import type { Emit, GameEvent } from './events'
 import { rankFor, scoreRun, type InputMode, type Outcome, type RunRecord } from './score'
 
 export type ScenePhase = 'school' | 'intro' | 'arrival' | 'rescue' | 'handoff' | 'boat' | 'outro' | 'results'
-export type SessionOptions = { aim: boolean; steering: boolean; stabilization: number; winchOnly: boolean }
+export type SessionOptions = { aim: boolean; steering: boolean; stabilization: number; winchOnly: boolean; boatThrottle?: BoatThrottle }
 export const timelines = {
   intro: { duration: 18, next: 'arrival' },
   arrival: { duration: 8, next: 'rescue' },
@@ -87,7 +88,8 @@ export class Session {
         this.finish('failed_all_lost')
       }
     } else if (this.phase === 'boat') {
-      this.boat.tick(dt, input.trackingState === 'degraded' ? { ...input, steer: 0, throttle: 0.4 } : input, this.assist.steering)
+      this.boat.tick(dt, input.trackingState === 'degraded' ? { ...input, steer: 0, throttle: 0.4 } : input,
+        this.assist.steering, this.inputMode === 'keyboardMouse' && this.assist.boatThrottle === 'hold')
       if (this.boat.done === 'landed') this.enter('outro')
       if (this.boat.done === 'destroyed') this.finish('failed_boat_destroyed')
     }

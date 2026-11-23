@@ -45,27 +45,32 @@ export function loopSlot(audio: AudioContext, clips: AudioClips, slug: string, o
   }
 }
 
-export function prepareHelicopterLoop(buffer: AudioBuffer) {
+export function prepareEngineLoop(buffer: AudioBuffer) {
   const frames = Math.min(Math.round(buffer.sampleRate * 0.12), Math.floor(buffer.length / 4))
   const overlap = frames >= 2 ? frames : 0
   const fade = new Float32Array(overlap)
   for (let i = 0; i < overlap; i++) fade[i] = Math.sin(i / (overlap - 1) * Math.PI / 2)
-  let peak = 0
-  let energy = 0
   for (let channel = 0; channel < buffer.numberOfChannels; channel++) {
     const samples = buffer.getChannelData(channel)
     const tail = samples.length - overlap
     // The tail blends into the head. Playback wraps to the next unblended sample.
     for (let i = 0; i < overlap; i++) samples[tail + i] = samples[tail + i] * fade[overlap - 1 - i] + samples[i] * fade[i]
-    for (const sample of samples) {
+  }
+  return { trim: recordingGain(buffer), loopStart: overlap / buffer.sampleRate }
+}
+
+export function recordingGain(buffer: AudioBuffer, duration = buffer.duration) {
+  const frames = Math.min(buffer.length, Math.round(duration * buffer.sampleRate))
+  let peak = 0
+  let energy = 0
+  for (let channel = 0; channel < buffer.numberOfChannels; channel++) {
+    for (const sample of buffer.getChannelData(channel).subarray(0, frames)) {
       peak = Math.max(peak, Math.abs(sample))
       energy += sample * sample
     }
   }
-  const rms = Math.sqrt(energy / (buffer.numberOfChannels * buffer.length))
-  // Calibrate the recording against the rain while leaving headroom at full rotor gain.
-  const trim = peak > 0 ? Math.min(0.50 / rms, 3.50 / peak, 7.50) : 1
-  return { trim, loopStart: overlap / buffer.sampleRate }
+  const rms = Math.sqrt(energy / (buffer.numberOfChannels * frames))
+  return peak > 0 ? Math.min(0.50 / rms, 3.50 / peak, 7.50) : 1
 }
 
 export function noiseBuffer(audio: AudioContext, seconds: number, smoothing: number, seed: number) {
@@ -99,8 +104,8 @@ const boatIdleRate = 0.70
 const boatFullRate = 1.46
 
 export function boatEngineMix(throttle: number, speed: number) {
-  const load = clamp(throttle * 0.86 + speed * 0.14)
-  return { volume: 0.056 + 0.323 * load ** 1.13, rate: lerp(boatIdleRate, boatFullRate, load) }
+  const load = clamp(throttle * 0.72 + speed * 0.28)
+  return { volume: 0.04 + 0.42 * load ** 1.18, rate: lerp(boatIdleRate, boatFullRate, load) }
 }
 
 export function loopEngine(audio: AudioContext, output: AudioNode, noise: AudioBuffer, helicopter: boolean): SetPitch {

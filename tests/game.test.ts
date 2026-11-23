@@ -4,7 +4,7 @@ import { pilotBot, replay, defaultAssists } from '../src/game/replay'
 import { scoreRun } from '../src/game/score'
 import { Session } from '../src/game/session'
 import { Boat, boatLungePosition, boatLungeTiming, boatSharkLength, boatSharkPose, harbor, harborContact,
-  planBoatLunge, reefContact, rockProfiles, type ReefHazard } from '../src/sim/boat'
+  planBoatLunge, reefContact, rockProfiles, sharkChaseEnd, type ReefHazard } from '../src/sim/boat'
 import { Rescue, rescueBoardX, rescuePlaneZ } from '../src/sim/rescue'
 import { setWaveIntensity, waveHeight, waveIntensity, waveUniforms } from '../src/sim/water'
 import type { GameEvent } from '../src/game/events'
@@ -19,9 +19,9 @@ describe('complete run', () => {
     expect(first.survivors.saved).toBeGreaterThanOrEqual(5)
     expect(first.score).toBe(repeat.score)
     expect(first.time).toEqual(repeat.time)
-    expect(first.events.filter(event => event.type === 'LUNGE_WARNING')).toHaveLength(4)
+    expect(first.events.filter(event => event.type === 'LUNGE_WARNING')).toHaveLength(8)
     expect(first.events.filter(event => event.boatSplash?.shark === 'megalodon').map(event => event.boatSplash?.stage))
-      .toEqual(['breach', 'reentry', 'breach', 'reentry'])
+      .toEqual(['breach', 'reentry', 'breach', 'reentry', 'breach'])
     expect(toCsv([first])).toContain('"REPLAY"')
   })
   it('logs a terminal idle loss', () => {
@@ -113,6 +113,35 @@ describe('complete run', () => {
 })
 
 describe('boat flank attacks', () => {
+  it('breaks off an active lunge when the boat enters the safe approach', () => {
+    const events: Omit<GameEvent, 't'>[] = []
+    const boat = new Boat(tuning.seed, (type, data) => events.push({ type, ...data }))
+    const attack = boat.lunges.at(-1)!
+    for (const other of boat.lunges) if (other !== attack) other.ended = true
+    boat.z = attack.courseZ - 44
+    boat.speed = tuning.boat.speed
+    const input = { ...neutralIntent, throttle: 1 }
+    boat.tick(tuning.tick, input, false)
+    expect(attack.time).toBeGreaterThan(0)
+    boat.z = sharkChaseEnd
+    for (let i = 0; i < 240; i++) boat.tick(tuning.tick, input, false)
+    expect(attack.retreatAt).toBeDefined()
+    expect(events.some(event => event.type === 'LUNGE' || !!event.boatSplash)).toBe(false)
+  })
+
+  it('reaches a slower open-water idle for hold-to-accelerate', () => {
+    const hold = new Boat(tuning.seed, () => {})
+    const sticky = new Boat(tuning.seed, () => {})
+    hold.speed = sticky.speed = 12
+    for (let i = 0; i < 180; i++) {
+      const idle = { ...neutralIntent, throttle: 0 }
+      hold.tick(tuning.tick, idle, false, true)
+      sticky.tick(tuning.tick, idle, false, false)
+    }
+    expect(hold.speed).toBeCloseTo(2.4)
+    expect(sticky.speed).toBeCloseTo(tuning.boat.speed * tuning.boat.throttleFloor)
+  })
+
   it.each([-1, 1] as const)('can dodge the regular shark from side %s after the warning', side => {
     function sail(dodge: boolean) {
       const events: Omit<GameEvent, 't'>[] = []
